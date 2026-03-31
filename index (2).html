@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WB AutoReply — Автоответы на отзывы</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ── DESIGN TOKENS ─────────────────────────── */
+:root, [data-theme="light"] {
+  --color-bg:             #f7f6f2;
+  --color-surface:        #f9f8f5;
+  --color-surface-2:      #fbfbf9;
+  --color-surface-offset: #f3f0ec;
+  --color-divider:        #dcd9d5;
+  --color-border:         #d4d1ca;
+  --color-text:           #28251d;
+  --color-text-muted:     #7a7974;
+  --color-text-faint:     #bab9b4;
+  --color-primary:        #01696f;
+  --color-primary-hover:  #0c4e54;
+  --color-primary-highlight: #cedcd8;
+  --color-success:        #437a22;
+  --color-success-highlight: #d4dfcc;
+  --color-warning:        #964219;
+  --color-warning-highlight: #ddcfc6;
+  --color-error:          #a12c7b;
+  --color-error-highlight: #e0ced7;
+  --color-notification:   #a13544;
+  --color-notification-highlight: #dececb;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px oklch(0.2 0.01 80 / 0.06);
+  --shadow-md: 0 4px 12px oklch(0.2 0.01 80 / 0.08);
+  --shadow-lg: 0 12px 32px oklch(0.2 0.01 80 / 0.12);
+  --transition: 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem;
+  --space-4: 1rem; --space-5: 1.25rem; --space-6: 1.5rem;
+  --space-8: 2rem; --space-10: 2.5rem; --space-12: 3rem;
+  --text-xs:   clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem);
+  --text-sm:   clamp(0.875rem, 0.8rem + 0.35vw, 1rem);
+  --text-base: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
+  --text-lg:   clamp(1.125rem, 1rem + 0.75vw, 1.5rem);
+  --text-xl:   clamp(1.5rem, 1.2rem + 1.25vw, 2.25rem);
+  --font-body: 'Inter', 'Helvetica Neue', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --sidebar-w: 220px;
+}
+[data-theme="dark"] {
+  --color-bg:             #171614;
+  --color-surface:        #1c1b19;
+  --color-surface-2:      #201f1d;
+  --color-surface-offset: #1d1c1a;
+  --color-divider:        #262523;
+  --color-border:         #393836;
+  --color-text:           #cdccca;
+  --color-text-muted:     #797876;
+  --color-text-faint:     #5a5957;
+  --color-primary:        #4f98a3;
+  --color-primary-hover:  #227f8b;
+  --color-primary-highlight: #313b3b;
+  --color-success:        #6daa45;
+  --color-success-highlight: #3a4435;
+  --color-warning:        #bb653b;
+  --color-warning-highlight: #564942;
+  --color-error:          #d163a7;
+  --color-error-highlight: #4c3d46;
+  --color-notification:   #dd6974;
+  --color-notification-highlight: #574848;
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.2);
+  --shadow-md: 0 4px 12px oklch(0 0 0 / 0.3);
+  --shadow-lg: 0 12px 32px oklch(0 0 0 / 0.4);
+}
+
+/* ── BASE RESET ────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-font-smoothing: antialiased; scroll-behavior: smooth; }
+body { min-height: 100dvh; font-family: var(--font-body); font-size: var(--text-sm); color: var(--color-text); background: var(--color-bg); }
+input, button, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: none; }
+img { display: block; max-width: 100%; }
+a, button, input, select, textarea { transition: color var(--transition), background var(--transition), border-color var(--transition), box-shadow var(--transition); }
+
+/* ── LAYOUT ────────────────────────────────── */
+.app-shell { display: grid; grid-template-columns: var(--sidebar-w) 1fr; grid-template-rows: auto 1fr; min-height: 100dvh; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-6); background: var(--color-surface); border-bottom: 1px solid oklch(from var(--color-text) l c h / 0.08); box-shadow: var(--shadow-sm); position: sticky; top: 0; z-index: 100; }
+.topbar-left { display: flex; align-items: center; gap: var(--space-3); }
+.logo { display: flex; align-items: center; gap: var(--space-2); font-weight: 600; font-size: var(--text-base); color: var(--color-primary); text-decoration: none; }
+.topbar-right { display: flex; align-items: center; gap: var(--space-2); }
+.profile-selector { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-3); background: var(--color-surface-offset); border-radius: var(--radius-full); font-size: var(--text-xs); }
+.sidebar { background: var(--color-surface); border-right: 1px solid oklch(from var(--color-text) l c h / 0.08); padding: var(--space-4) 0; overflow-y: auto; }
+.sidebar-nav { display: flex; flex-direction: column; gap: var(--space-1); padding: 0 var(--space-3); }
+.nav-item { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); color: var(--color-text-muted); cursor: pointer; font-size: var(--text-sm); text-decoration: none; transition: all var(--transition); border: none; background: none; width: 100%; text-align: left; }
+.nav-item:hover { background: var(--color-surface-offset); color: var(--color-text); }
+.nav-item.active { background: var(--color-primary-highlight); color: var(--color-primary); font-weight: 500; }
+.main { padding: var(--space-6); overflow-y: auto; }
+.page { display: none; }
+.page.active { display: block; }
+
+/* ── COMPONENTS ────────────────────────────── */
+.page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: var(--space-6); }
+.page-title { font-size: var(--text-xl); font-weight: 600; line-height: 1.15; }
+.page-desc { color: var(--color-text-muted); margin-top: var(--space-1); font-size: var(--text-sm); }
+.card { background: var(--color-surface); border: 1px solid oklch(from var(--color-text) l c h / 0.08); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: var(--space-5); }
+.card + .card, .card + .grid, .grid + .card { margin-top: var(--space-4); }
+.card-title { font-size: var(--text-base); font-weight: 600; margin-bottom: var(--space-4); }
+.card-desc { font-size: var(--text-sm); color: var(--color-text-muted); margin-top: var(--space-1); margin-bottom: var(--space-4); }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--space-4); }
+.grid-auto { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-4); }
+.kpi-card { background: var(--color-surface); border: 1px solid oklch(from var(--color-text) l c h / 0.08); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: var(--space-5); }
+.kpi-label { font-size: var(--text-xs); color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.kpi-value { font-size: var(--text-xl); font-weight: 700; margin-top: var(--space-1); color: var(--color-text); font-variant-numeric: tabular-nums; }
+.kpi-sub { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: var(--space-1); }
+.kpi-accent { color: var(--color-primary); }
+.kpi-success { color: var(--color-success); }
+.kpi-warn { color: var(--color-warning); }
+.btn { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); font-size: var(--text-sm); font-weight: 500; border: none; cursor: pointer; transition: all var(--transition); }
+.btn-primary { background: var(--color-primary); color: white; }
+.btn-primary:hover { background: var(--color-primary-hover); }
+.btn-secondary { background: transparent; color: var(--color-text); border: 1px solid oklch(from var(--color-text) l c h / 0.2); }
+.btn-secondary:hover { background: var(--color-surface-offset); }
+.btn-ghost { background: transparent; color: var(--color-text-muted); padding: var(--space-2); }
+.btn-ghost:hover { color: var(--color-text); background: var(--color-surface-offset); border-radius: var(--radius-md); }
+.btn-danger { background: var(--color-error); color: white; }
+.btn-sm { padding: var(--space-1) var(--space-3); font-size: var(--text-xs); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.form-group { margin-bottom: var(--space-4); }
+.form-group:last-child { margin-bottom: 0; }
+label { display: block; font-size: var(--text-xs); font-weight: 500; color: var(--color-text-muted); margin-bottom: var(--space-1); text-transform: uppercase; letter-spacing: 0.06em; }
+input[type="text"], input[type="password"], input[type="number"], select, textarea { width: 100%; padding: var(--space-2) var(--space-3); background: var(--color-bg); border: 1px solid oklch(from var(--color-text) l c h / 0.15); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--color-text); transition: all var(--transition); }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--color-primary); outline-offset: 0; border-color: var(--color-primary); }
+textarea { resize: vertical; min-height: 100px; font-family: var(--font-body); }
+.form-hint { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: var(--space-1); }
+.input-row { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2); align-items: end; }
+.toggle-wrap { display: flex; align-items: center; gap: var(--space-3); }
+.toggle { position: relative; width: 40px; height: 22px; background: var(--color-border); border-radius: var(--radius-full); cursor: pointer; transition: background var(--transition); flex-shrink: 0; }
+.toggle.on { background: var(--color-primary); }
+.toggle::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: var(--radius-full); background: white; transition: transform var(--transition); box-shadow: var(--shadow-sm); }
+.toggle.on::after { transform: translateX(18px); }
+.toggle-label { font-size: var(--text-sm); color: var(--color-text); }
+.badge { display: inline-flex; align-items: center; gap: var(--space-1); padding: 2px var(--space-2); border-radius: var(--radius-full); font-size: var(--text-xs); font-weight: 500; }
+.badge-primary { background: var(--color-primary-highlight); color: var(--color-primary); }
+.badge-success { background: var(--color-success-highlight); color: var(--color-success); }
+.badge-warning { background: var(--color-warning-highlight); color: var(--color-warning); }
+.badge-error   { background: var(--color-error-highlight); color: var(--color-error); }
+.badge-neutral { background: var(--color-surface-offset); color: var(--color-text-muted); }
+.stars { color: #f59e0b; font-size: 14px; letter-spacing: -2px; }
+.review-card { background: var(--color-surface); border: 1px solid oklch(from var(--color-text) l c h / 0.08); border-radius: var(--radius-lg); padding: var(--space-4); box-shadow: var(--shadow-sm); transition: box-shadow var(--transition); }
+.review-card:hover { box-shadow: var(--shadow-md); }
+.review-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: var(--space-3); }
+.review-meta { display: flex; flex-direction: column; gap: var(--space-1); }
+.review-user { font-weight: 600; font-size: var(--text-sm); }
+.review-date { font-size: var(--text-xs); color: var(--color-text-muted); }
+.review-text { font-size: var(--text-sm); color: var(--color-text); line-height: 1.6; }
+.review-product { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: var(--space-2); padding: var(--space-2) var(--space-3); background: var(--color-surface-offset); border-radius: var(--radius-sm); }
+.review-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); flex-wrap: wrap; }
+.ai-reply-box { margin-top: var(--space-3); padding: var(--space-3); background: var(--color-primary-highlight); border-radius: var(--radius-md); font-size: var(--text-sm); line-height: 1.6; color: var(--color-primary); border: 1px solid oklch(from var(--color-primary) l c h / 0.2); }
+.ai-reply-box strong { display: block; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: var(--space-2); opacity: 0.8; }
+.reply-textarea { width: 100%; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); font-size: var(--text-sm); border: 1px solid oklch(from var(--color-primary) l c h / 0.3); background: var(--color-surface-2); margin-top: var(--space-2); resize: vertical; min-height: 80px; }
+.reply-textarea:focus { outline: 2px solid var(--color-primary); border-color: transparent; }
+.log-box { background: var(--color-bg); border: 1px solid oklch(from var(--color-text) l c h / 0.1); border-radius: var(--radius-md); padding: var(--space-3); font-family: var(--font-mono); font-size: 11px; line-height: 1.8; max-height: 280px; overflow-y: auto; color: var(--color-text-muted); }
+.log-line { display: flex; gap: var(--space-2); }
+.log-time { color: var(--color-text-faint); flex-shrink: 0; }
+.log-ok { color: var(--color-success); }
+.log-err { color: var(--color-notification); }
+.log-info { color: var(--color-primary); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner { width: 16px; height: 16px; border: 2px solid oklch(from var(--color-primary) l c h / 0.3); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.7s linear infinite; flex-shrink: 0; }
+.status-bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); font-size: var(--text-xs); border-radius: var(--radius-md); margin-bottom: var(--space-4); }
+.status-ok { background: var(--color-success-highlight); color: var(--color-success); }
+.status-err { background: var(--color-error-highlight); color: var(--color-error); }
+.status-warn { background: var(--color-warning-highlight); color: var(--color-warning); }
+.status-info { background: var(--color-primary-highlight); color: var(--color-primary); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.divider { height: 1px; background: var(--color-divider); margin: var(--space-4) 0; }
+.empty { text-align: center; padding: var(--space-12) var(--space-8); color: var(--color-text-muted); }
+.empty-icon { font-size: 40px; margin-bottom: var(--space-3); }
+.empty h3 { color: var(--color-text); margin-bottom: var(--space-2); font-size: var(--text-base); }
+.hint-box { background: var(--color-surface-offset); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: var(--space-4); }
+.hint-box strong { color: var(--color-text); }
+.tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--color-divider); margin-bottom: var(--space-5); }
+.tab { padding: var(--space-2) var(--space-4); font-size: var(--text-sm); color: var(--color-text-muted); cursor: pointer; border-bottom: 2px solid transparent; transition: all var(--transition); background: none; border-top: none; border-left: none; border-right: none; }
+.tab:hover { color: var(--color-text); }
+.tab.active { color: var(--color-primary); border-bottom-color: var(--color-primary); font-weight: 500; }
+.toast-container { position: fixed; bottom: var(--space-6); right: var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); z-index: 9999; pointer-events: none; }
+.toast { padding: var(--space-3) var(--space-5); border-radius: var(--radius-lg); font-size: var(--text-sm); background: var(--color-text); color: var(--color-bg); box-shadow: var(--shadow-lg); max-width: 360px; animation: toastIn 0.3s cubic-bezier(0.16,1,0.3,1); pointer-events: all; }
+@keyframes toastIn { from { opacity:0; transform: translateY(16px); } to { opacity:1; transform: translateY(0); } }
+.toast.success { background: var(--color-success); }
+.toast.error { background: var(--color-notification); }
+@media (max-width: 768px) { .app-shell { grid-template-columns: 1fr; } .sidebar { display: none; } .grid-2, .grid-3, .grid-auto { grid-template-columns: 1fr; } }
+.api-key-display { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-text-muted); word-break: break-all; background: var(--color-surface-offset); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); margin-top: var(--space-1); }
+
+/* ── PROFILE / SETUP OVERLAY ──────────────── */
+.profile-overlay { position: fixed; inset: 0; z-index: 10000; background: var(--color-bg); display: flex; align-items: center; justify-content: center; }
+.profile-overlay.hidden { display: none; }
+.profile-login { text-align: center; max-width: 440px; padding: var(--space-8); }
+.profile-login h2 { font-size: var(--text-xl); font-weight: 600; margin-bottom: var(--space-2); }
+.profile-login p { color: var(--color-text-muted); font-size: var(--text-sm); margin-bottom: var(--space-6); }
+.profile-buttons { display: flex; flex-direction: column; gap: var(--space-3); }
+.profile-btn { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-5); border: 1px solid oklch(from var(--color-text) l c h / 0.12); border-radius: var(--radius-lg); background: var(--color-surface); cursor: pointer; transition: all var(--transition); text-align: left; width: 100%; }
+.profile-btn:hover { border-color: var(--color-primary); box-shadow: var(--shadow-md); }
+.profile-btn-icon { width: 40px; height: 40px; border-radius: var(--radius-full); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+.profile-btn-icon.p1 { background: var(--color-primary-highlight); color: var(--color-primary); }
+.profile-btn-icon.p2 { background: var(--color-warning-highlight); color: var(--color-warning); }
+.profile-btn-name { font-weight: 600; font-size: var(--text-sm); }
+.profile-btn-hint { font-size: var(--text-xs); color: var(--color-text-muted); }
+.sync-badge { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-xs); padding: 2px 8px; border-radius: var(--radius-full); }
+.sync-ok { background: var(--color-success-highlight); color: var(--color-success); }
+.sync-err { background: var(--color-error-highlight); color: var(--color-error); }
+.sync-loading { background: var(--color-primary-highlight); color: var(--color-primary); }
+</style>
+</head>
+<body>
+
+<!-- ═══ FIREBASE SETUP OVERLAY ═══ -->
+<div class="profile-overlay" id="setupOverlay">
+  <div class="profile-login" style="max-width:520px">
+    <svg width="48" height="48" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin:0 auto var(--space-4)">
+      <rect width="28" height="28" rx="7" fill="var(--color-primary)"/>
+      <path d="M7 9L10.5 19L14 11L17.5 19L21 9" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="20" cy="20" r="4" fill="#f7f6f2"/>
+      <path d="M19 20L20 21L21.5 18.5" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <h2>Первоначальная настройка</h2>
+    <p>Вставьте конфигурацию Firebase для облачного хранения данных. Это нужно сделать один раз — конфиг сохранится в этом браузере.</p>
+    <div style="text-align:left">
+      <div class="form-group">
+        <label>Firebase Config (JSON)</label>
+        <textarea id="setupFirebaseConfig" rows="8" placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}'></textarea>
+        <div class="form-hint">Скопируйте из Firebase Console → Project Settings → Your apps → Config</div>
+      </div>
+    </div>
+    <button class="btn btn-primary" id="connectBtn" onclick="saveFirebaseConfig()" style="width:100%" disabled>Загрузка...</button>
+  </div>
+</div>
+
+<!-- ═══ PROFILE SELECT OVERLAY ═══ -->
+<div class="profile-overlay hidden" id="profileOverlay">
+  <div class="profile-login">
+    <svg width="48" height="48" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin:0 auto var(--space-4)">
+      <rect width="28" height="28" rx="7" fill="var(--color-primary)"/>
+      <path d="M7 9L10.5 19L14 11L17.5 19L21 9" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="20" cy="20" r="4" fill="#f7f6f2"/>
+      <path d="M19 20L20 21L21.5 18.5" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <h2>WB AutoReply</h2>
+    <p>Выберите профиль. Все настройки синхронизируются через облако — можно работать с любого устройства.</p>
+    <div class="profile-buttons" id="profileButtons"></div>
+    <div style="margin-top: var(--space-6)">
+      <button class="btn btn-secondary btn-sm" onclick="openProfileSettings()">⚙️ Настроить профили</button>
+      <button class="btn btn-secondary btn-sm" onclick="resetFirebaseConfig()" style="margin-left:var(--space-2); color:var(--color-text-muted)">🔄 Сменить Firebase</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PROFILE NAMES SETTINGS ═══ -->
+<div class="profile-overlay hidden" id="profileSettingsOverlay">
+  <div class="profile-login" style="max-width: 480px">
+    <h2>Настройка профилей</h2>
+    <p>Задайте имена для двух профилей.</p>
+    <div style="text-align:left;">
+      <div class="form-group"><label>Профиль 1 — Имя</label><input type="text" id="profileName1" placeholder="Например: Иван"></div>
+      <div class="form-group"><label>Профиль 2 — Имя</label><input type="text" id="profileName2" placeholder="Например: Мария"></div>
+    </div>
+    <div style="display:flex; gap: var(--space-3); justify-content: center; margin-top: var(--space-4)">
+      <button class="btn btn-primary" onclick="saveProfileNames()">Сохранить</button>
+      <button class="btn btn-secondary" onclick="closeProfileSettings()">Отмена</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- ═══ MAIN APP ═══ -->
+<div class="app-shell" id="appShell" style="display:none">
+  <header class="topbar">
+    <div class="topbar-left">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="28" height="28" rx="7" fill="var(--color-primary)"/><path d="M7 9L10.5 19L14 11L17.5 19L21 9" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="20" cy="20" r="4" fill="#f7f6f2"/><path d="M19 20L20 21L21.5 18.5" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <a class="logo" href="#">WB AutoReply</a>
+    </div>
+    <div class="topbar-right">
+      <div class="profile-selector">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span id="currentProfileName">—</span>
+        <button class="btn-ghost" onclick="switchProfile()" title="Сменить профиль" style="padding:2px 4px;font-size:var(--text-xs)">↔</button>
+      </div>
+      <span id="syncStatus" class="sync-badge sync-ok">☁ синхронизировано</span>
+      <span id="topbarApiStatus" style="font-size: var(--text-xs); color: var(--color-text-muted);">API: не настроен</span>
+      <button class="btn-ghost" onclick="toggleTheme()" data-theme-toggle aria-label="Сменить тему" title="Тема">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+    </div>
+  </header>
+  <nav class="sidebar"><div class="sidebar-nav">
+    <button class="nav-item active" onclick="showPage('dashboard')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> Дашборд</button>
+    <button class="nav-item" onclick="showPage('reviews')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> Отзывы</button>
+    <button class="nav-item" onclick="showPage('automode')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Авторежим</button>
+    <button class="nav-item" onclick="showPage('settings')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg> Настройки</button>
+    <button class="nav-item" onclick="showPage('log')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> Лог операций</button>
+  </div></nav>
+  <main class="main">
+    <!-- DASHBOARD -->
+    <div id="page-dashboard" class="page active">
+      <div class="page-header"><div><h1 class="page-title">Дашборд</h1><p class="page-desc">Обзор состояния автоответов</p></div>
+        <button class="btn btn-primary" onclick="loadFeedbacks()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.48"/></svg> Обновить</button></div>
+      <div id="dashStatus"></div>
+      <div class="grid-auto" id="kpiRow">
+        <div class="kpi-card"><div class="kpi-label">Неотвеченных</div><div class="kpi-value kpi-warn" id="kpiUnanswered">—</div><div class="kpi-sub">всего за все время</div></div>
+        <div class="kpi-card"><div class="kpi-label">Загружено отзывов</div><div class="kpi-value kpi-accent" id="kpiFetched">0</div><div class="kpi-sub">в текущей сессии</div></div>
+        <div class="kpi-card"><div class="kpi-label">Ответов отправлено</div><div class="kpi-value kpi-success" id="kpiSent">0</div><div class="kpi-sub">в текущей сессии</div></div>
+        <div class="kpi-card"><div class="kpi-label">AI-ответов сгенерировано</div><div class="kpi-value" id="kpiGenerated">0</div><div class="kpi-sub">в текущей сессии</div></div>
+      </div>
+      <div class="divider"></div>
+      <div class="card"><div class="card-title">Быстрый старт</div><div class="hint-box"><strong>Как это работает:</strong> перейдите в <em>Настройки</em> → введите WB API ключ и Perplexity API ключ → нажмите <em>Обновить</em> выше → перейдите в <em>Отзывы</em> → генерируйте ответы одним кликом.</div>
+        <div style="display:flex; gap: var(--space-3); flex-wrap:wrap"><button class="btn btn-primary" onclick="showPage('settings')">⚙️ Настройки API</button><button class="btn btn-secondary" onclick="showPage('reviews')">💬 Отзывы</button><button class="btn btn-secondary" onclick="showPage('automode')">⚡ Авторежим</button></div></div>
+    </div>
+    <!-- REVIEWS -->
+    <div id="page-reviews" class="page">
+      <div class="page-header"><div><h1 class="page-title">Отзывы</h1><p class="page-desc">Неотвеченные отзывы покупателей</p></div>
+        <div style="display:flex; gap: var(--space-2)"><button class="btn btn-secondary btn-sm" onclick="loadFeedbacks()"><span id="loadBtnSpinner" style="display:none"><div class="spinner"></div></span> Загрузить</button><button class="btn btn-primary btn-sm" onclick="generateAllAI()" id="genAllBtn">✨ Сгенерировать все AI</button></div></div>
+      <div id="reviewsStatus"></div>
+      <div id="reviewsList"><div class="empty"><div class="empty-icon">💬</div><h3>Отзывы не загружены</h3><p>Настройте API ключ WB и нажмите «Загрузить»</p><button class="btn btn-primary" style="margin-top: var(--space-4)" onclick="loadFeedbacks()">Загрузить отзывы</button></div></div>
+    </div>
+    <!-- AUTOMODE -->
+    <div id="page-automode" class="page">
+      <div class="page-header"><div><h1 class="page-title">Авторежим</h1><p class="page-desc">Автоматическая проверка и ответы на новые отзывы</p></div></div>
+      <div class="card" style="margin-bottom: var(--space-4)"><div class="card-title">Управление авторежимом</div>
+        <div class="toggle-wrap" style="margin-bottom: var(--space-4)"><div class="toggle" id="autoToggle" onclick="toggleAutoMode()"></div><span class="toggle-label" id="autoToggleLabel">Авторежим выключен</span></div>
+        <div class="form-group"><label>Интервал проверки (минуты)</label><input type="number" id="autoInterval" value="10" min="5" max="120" style="max-width: 120px"><div class="form-hint">Минимум 5 минут</div></div>
+        <div class="form-group"><label>Режим авторежима</label><select id="autoModeType"><option value="generate-only">Только генерировать (без отправки)</option><option value="auto-send">Генерировать и отправлять автоматически</option></select><div class="form-hint">⚠️ Режим «Отправлять автоматически» — рекомендуем сначала протестировать</div></div></div>
+      <div class="card"><div class="card-title">Статус авторежима</div><div id="autoStatus"><div class="status-bar status-warn"><div class="dot"></div> Авторежим не запущен</div></div><div id="autoLog" class="log-box" style="margin-top: var(--space-3)"><div class="log-line"><span class="log-time">—</span><span>Лог авторежима пуст</span></div></div></div>
+    </div>
+    <!-- SETTINGS -->
+    <div id="page-settings" class="page">
+      <div class="page-header"><div><h1 class="page-title">Настройки</h1><p class="page-desc">API ключи и параметры генерации</p></div></div>
+      <div class="tabs">
+        <button class="tab active" onclick="showTab('tab-api', this)">API ключи</button>
+        <button class="tab" onclick="showTab('tab-prompt', this)">Промпт</button>
+        <button class="tab" onclick="showTab('tab-filters', this)">Фильтры</button>
+        <button class="tab" onclick="showTab('tab-brands', this)">Подписи брендов</button>
+      </div>
+      <div id="tab-api" class="tab-content">
+        <div class="card" style="margin-bottom: var(--space-4)"><div class="card-title">Wildberries API</div>
+          <div class="hint-box">Токен: ЛК продавца → Интеграции по API → Создать токен → категория <strong>«Вопросы и отзывы»</strong> + <strong>«Контент»</strong></div>
+          <div class="form-group"><label>WB API ключ</label><div class="input-row"><input type="password" id="wbApiKey" placeholder="eyJhbGciOi..."><button class="btn btn-secondary" onclick="saveWbKey()">Сохранить</button></div><div id="wbKeyDisplay" class="api-key-display" style="display:none"></div></div>
+          <div style="display:flex; gap: var(--space-2)"><button class="btn btn-secondary btn-sm" onclick="pingWB()">🔌 Проверить</button><button class="btn btn-secondary btn-sm" onclick="clearWbKey()" style="color:var(--color-notification)">✕ Удалить ключ</button></div><div id="wbPingResult" style="margin-top: var(--space-2)"></div></div>
+        <div class="card"><div class="card-title">Perplexity API</div>
+          <div class="hint-box">Ключ: <strong>perplexity.ai → Settings → API → Generate</strong>. Модель <strong>sonar</strong>, ~1-2$ за 1000 ответов.</div>
+          <div class="form-group"><label>Perplexity API ключ</label><div class="input-row"><input type="password" id="pplxApiKey" placeholder="pplx-..."><button class="btn btn-secondary" onclick="savePplxKey()">Сохранить</button></div><div id="pplxKeyDisplay" class="api-key-display" style="display:none"></div></div>
+          <div style="display:flex; gap: var(--space-2)"><button class="btn btn-secondary btn-sm" onclick="testPplx()">🤖 Тест генерации</button><button class="btn btn-secondary btn-sm" onclick="clearPplxKey()" style="color:var(--color-notification)">✕ Удалить ключ</button></div><div id="pplxTestResult" style="margin-top: var(--space-2)"></div></div>
+      </div>
+      <div id="tab-prompt" class="tab-content" style="display:none">
+        <div class="card"><div class="card-title">Системный промпт</div><div class="card-desc">Переменные: {stars}, {product}, {text}, {pros}, {cons}</div><div class="form-group"><label>Промпт</label><textarea id="systemPrompt" rows="10"></textarea></div><button class="btn btn-primary btn-sm" onclick="savePrompt()">Сохранить промпт</button></div>
+      </div>
+      <div id="tab-filters" class="tab-content" style="display:none">
+        <div class="card"><div class="card-title">Фильтры автоответов</div>
+          <div class="form-group"><label>Минимальная оценка для автоответа</label><select id="filterMinStars"><option value="1">Все отзывы (от 1★)</option><option value="2">От 2★</option><option value="3">От 3★</option><option value="4">Только 4★ и 5★</option></select></div>
+          <div class="form-group"><label>Мин. длина текста (символов)</label><input type="number" id="filterMinLength" value="0" min="0" max="500"><div class="form-hint">0 — отвечать даже без текста</div></div>
+          <div class="form-group"><label>Стоп-слова (через запятую)</label><input type="text" id="filterStopWords" placeholder="бракованный, возврат..."><div class="form-hint">На эти слова — не отвечать автоматически</div></div>
+          <button class="btn btn-primary btn-sm" onclick="saveFilters()">Сохранить фильтры</button></div>
+      </div>
+      <div id="tab-brands" class="tab-content" style="display:none">
+        <div class="card" style="margin-bottom: var(--space-4)"><div class="card-title">Подписи брендов</div><div class="card-desc">Подпись добавляется в конец ответа, если бренд совпадает с карточкой товара.</div>
+          <div id="brandList" style="display:flex; flex-direction:column; gap: var(--space-3); margin-bottom: var(--space-4)"></div>
+          <div class="card" style="background: var(--color-surface-offset); box-shadow: none; margin-top: 0">
+            <div class="card-title" style="font-size: var(--text-sm); margin-bottom: var(--space-3)">Добавить новый бренд</div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-bottom: var(--space-3)">
+              <div class="form-group" style="margin:0"><label>Название бренда (точное)</label><input type="text" id="newBrandKeyword" placeholder="SNOWPRO"></div>
+              <div class="form-group" style="margin:0"><label>Цвет метки</label><select id="newBrandColor"><option value="badge-primary">Синий</option><option value="badge-success">Зелёный</option><option value="badge-warning">Оранжевый</option><option value="badge-error">Фиолетовый</option><option value="badge-neutral">Серый</option></select></div></div>
+            <div class="form-group"><label>Текст подписи</label><textarea id="newBrandSignature" rows="2" placeholder="С уважением, команда SNOWPRO ❄️"></textarea></div>
+            <div class="form-group" style="margin-bottom: 0"><label>Превью</label><div id="brandPreview" style="background: var(--color-primary-highlight); border-radius: var(--radius-md); padding: var(--space-3); font-size: var(--text-sm); color: var(--color-primary); min-height: 48px; line-height: 1.6; white-space: pre-wrap; border: 1px solid oklch(from var(--color-primary) l c h / 0.2)">Спасибо за ваш отзыв! Мы рады, что товар вам понравился.</div></div>
+            <button class="btn btn-primary btn-sm" style="margin-top: var(--space-3)" onclick="addBrand()">+ Добавить бренд</button></div></div>
+        <div class="card"><div class="card-title">Тест подписи</div><div class="card-desc">Введите nmId для проверки</div><div class="input-row"><input type="text" id="testProductName" placeholder="nmId (артикул WB)"><button class="btn btn-secondary" onclick="testSignature()">Проверить</button></div><div id="testSignatureResult" style="margin-top: var(--space-3)"></div></div>
+      </div>
+    </div>
+    <!-- LOG -->
+    <div id="page-log" class="page">
+      <div class="page-header"><div><h1 class="page-title">Лог операций</h1><p class="page-desc">История всех запросов и действий</p></div><button class="btn btn-secondary btn-sm" onclick="clearLog()">Очистить</button></div>
+      <div class="card"><div id="mainLog" class="log-box" style="max-height: 500px"><div class="log-line"><span class="log-time">—</span><span>Лог пуст.</span></div></div></div>
+    </div>
+  </main>
+</div>
+
+<!-- ═══ FIREBASE SDK ═══ -->
+<script>
+let _initializeApp, _getDatabase, _ref, _set, _get, _onValue;
+let _firebaseReady = false;
+
+(async function loadFirebaseSDK() {
+  try {
+    const appMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+    const dbMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
+    _initializeApp = appMod.initializeApp;
+    _getDatabase = dbMod.getDatabase;
+    _ref = dbMod.ref;
+    _set = dbMod.set;
+    _get = dbMod.get;
+    _onValue = dbMod.onValue;
+    _firebaseReady = true;
+    const btn = document.getElementById('connectBtn');
+    if (btn) { btn.disabled = false; btn.textContent = 'Подключиться'; }
+    _appInit();
+  } catch(e) {
+    console.error('Firebase SDK load error:', e);
+    const btn = document.getElementById('connectBtn');
+    if (btn) { btn.disabled = false; btn.textContent = 'Подключиться'; }
+    const hint = document.querySelector('#setupOverlay .form-hint');
+    if (hint) hint.innerHTML += '<br><span style="color:var(--color-error)">⚠ Firebase SDK не загрузился. Проверьте интернет и перезагрузите страницу.</span>';
+  }
+})();
+
+// ══════════════════════════════════════════════════════════════
+// FIREBASE + STATE
+// ══════════════════════════════════════════════════════════════
+let db = null;
+const DEFAULT_PROMPT = `Ты — вежливый менеджер магазина на Wildberries. Напиши короткий профессиональный ответ покупателю на его отзыв.
+
+Данные отзыва:
+- Оценка: {stars} из 5
+- Товар: {product}
+- Текст отзыва: "{text}"
+- Плюсы: {pros}
+- Минусы: {cons}
+
+Правила:
+1. Отвечай на русском языке
+2. Будь вежливым и благодарным
+3. На низкие оценки (1-2 звезды) — принеси извинения и предложи решение
+4. На высокие оценки (4-5 звезд) — поблагодари и пригласи снова
+5. Не упоминай конкурентов
+6. Ответ должен быть 1-3 предложения, максимум 200 символов
+7. Не добавляй никаких заголовков, просто текст ответа`;
+
+const state = {
+  profileId: null,
+  wbKey: '', pplxKey: '',
+  feedbacks: [], aiReplies: {},
+  kpiSent: 0, kpiGenerated: 0,
+  autoInterval: null, autoActive: false,
+  systemPrompt: DEFAULT_PROMPT,
+  brands: [], brandCache: {},
+};
+
+// ── Firebase persistence helpers ─────────────────────────────
+async function dbSet(path, val) {
+  if (!db) return;
+  try {
+    await _set(_ref(db, path), val);
+    setSyncStatus('ok');
+  } catch (e) {
+    console.error('Firebase write error:', e);
+    setSyncStatus('err');
+  }
+}
+async function dbGet(path, fallback) {
+  if (!db) return fallback;
+  try {
+    const snap = await _get(_ref(db, path));
+    return snap.exists() ? snap.val() : fallback;
+  } catch (e) {
+    console.error('Firebase read error:', e);
+    setSyncStatus('err');
+    return fallback;
+  }
+}
+function pSet(key, val) { dbSet(`profiles/${state.profileId}/${key}`, val); }
+async function pGet(key, fallback) { return dbGet(`profiles/${state.profileId}/${key}`, fallback); }
+
+function setSyncStatus(s) {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  if (s === 'ok') { el.className = 'sync-badge sync-ok'; el.textContent = '☁ синхронизировано'; }
+  else if (s === 'err') { el.className = 'sync-badge sync-err'; el.textContent = '⚠ ошибка синхр.'; }
+  else { el.className = 'sync-badge sync-loading'; el.textContent = '⏳ загрузка...'; }
+}
+
+// ── LocalStorage for firebase config only ────────────────────
+function lsGet(k, fb) { try { const v = localStorage.getItem('wbar_' + k); return v !== null ? JSON.parse(v) : fb; } catch { return fb; } }
+function lsSet(k, v) { try { localStorage.setItem('wbar_' + k, JSON.stringify(v)); } catch {} }
+
+// ══════════════════════════════════════════════════════════════
+// FIREBASE SETUP
+// ══════════════════════════════════════════════════════════════
+window.saveFirebaseConfig = function() {
+  if (!_firebaseReady) { alert('Подождите, Firebase SDK ещё загружается... Перезагрузите страницу если не помогает.'); return; }
+  const raw = document.getElementById('setupFirebaseConfig').value.trim();
+  if (!raw) { toast('Вставьте Firebase Config JSON', 'error'); return; }
+  let config;
+  try {
+    config = JSON.parse(raw);
+  } catch(e) { toast('Невалидный JSON: ' + e.message, 'error'); return; }
+  if (!config.databaseURL) { toast('В конфиге нет databaseURL — убедитесь что вы создали Realtime Database', 'error'); return; }
+  lsSet('firebaseConfig', config);
+  initFirebase(config);
+};
+window.resetFirebaseConfig = function() {
+  localStorage.removeItem('wbar_firebaseConfig');
+  location.reload();
+};
+
+function initFirebase(config) {
+  try {
+    const app = _initializeApp(config);
+    db = _getDatabase(app);
+    document.getElementById('setupOverlay').classList.add('hidden');
+    document.getElementById('profileOverlay').classList.remove('hidden');
+    renderProfileButtons();
+    toast('Firebase подключен', 'success');
+  } catch(e) {
+    toast('Ошибка Firebase: ' + e.message, 'error');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// PROFILES
+// ══════════════════════════════════════════════════════════════
+async function getProfileNames() {
+  const n1 = await dbGet('meta/profile1_name', 'Пользователь 1');
+  const n2 = await dbGet('meta/profile2_name', 'Пользователь 2');
+  return { 1: n1, 2: n2 };
+}
+
+async function renderProfileButtons() {
+  const names = await getProfileNames();
+  const el = document.getElementById('profileButtons');
+  // Check if keys exist
+  const hasKeys1 = await dbGet('profiles/1/wbKey', '');
+  const hasKeys2 = await dbGet('profiles/2/wbKey', '');
+  el.innerHTML = [1, 2].map(id => {
+    const hasKeys = id === 1 ? hasKeys1 : hasKeys2;
+    return `<button class="profile-btn" onclick="selectProfile(${id})">
+      <div class="profile-btn-icon p${id}">${names[id].charAt(0).toUpperCase()}</div>
+      <div><div class="profile-btn-name">${escHtml(names[id])}</div>
+      <div class="profile-btn-hint">${hasKeys ? '🔑 API ключи настроены' : 'Ключи не введены'}</div></div></button>`;
+  }).join('');
+}
+window.renderProfileButtons = renderProfileButtons;
+
+window.openProfileSettings = async function() {
+  const names = await getProfileNames();
+  document.getElementById('profileName1').value = names[1];
+  document.getElementById('profileName2').value = names[2];
+  document.getElementById('profileSettingsOverlay').classList.remove('hidden');
+};
+window.closeProfileSettings = function() { document.getElementById('profileSettingsOverlay').classList.add('hidden'); };
+window.saveProfileNames = async function() {
+  const n1 = document.getElementById('profileName1').value.trim() || 'Пользователь 1';
+  const n2 = document.getElementById('profileName2').value.trim() || 'Пользователь 2';
+  await dbSet('meta/profile1_name', n1);
+  await dbSet('meta/profile2_name', n2);
+  renderProfileButtons();
+  closeProfileSettings();
+  if (state.profileId) {
+    const names = { 1: n1, 2: n2 };
+    document.getElementById('currentProfileName').textContent = names[state.profileId];
+  }
+  toast('Профили сохранены', 'success');
+};
+
+window.selectProfile = async function(id) {
+  state.profileId = id;
+  setSyncStatus('loading');
+  await loadProfileData();
+  document.getElementById('profileOverlay').classList.add('hidden');
+  document.getElementById('appShell').style.display = '';
+  const names = await getProfileNames();
+  document.getElementById('currentProfileName').textContent = names[id];
+  refreshUIFromState();
+  setSyncStatus('ok');
+  addLog(`Профиль «${names[id]}» активирован`, 'ok');
+};
+
+window.switchProfile = function() {
+  if (state.autoActive) { clearInterval(state.autoInterval); state.autoActive = false; }
+  document.getElementById('appShell').style.display = 'none';
+  document.getElementById('profileOverlay').classList.remove('hidden');
+  renderProfileButtons();
+};
+
+async function loadProfileData() {
+  state.wbKey = await pGet('wbKey', '');
+  state.pplxKey = await pGet('pplxKey', '');
+  state.systemPrompt = await pGet('systemPrompt', DEFAULT_PROMPT);
+  state.brands = await pGet('brands', []);
+  if (!Array.isArray(state.brands)) state.brands = [];
+  state.brandCache = {};
+  state.feedbacks = []; state.aiReplies = {};
+  state.kpiSent = 0; state.kpiGenerated = 0;
+  state.autoActive = false; state.autoInterval = null;
+}
+
+function refreshUIFromState() {
+  document.getElementById('systemPrompt').value = state.systemPrompt;
+  document.getElementById('filterMinStars').value = '1';
+  document.getElementById('filterMinLength').value = '0';
+  document.getElementById('filterStopWords').value = '';
+  // Load filters from Firebase asynchronously
+  (async () => {
+    document.getElementById('filterMinStars').value = await pGet('filterMinStars', '1');
+    document.getElementById('filterMinLength').value = await pGet('filterMinLength', '0');
+    document.getElementById('filterStopWords').value = await pGet('filterStopWords', '');
+  })();
+  const wbDisp = document.getElementById('wbKeyDisplay');
+  if (state.wbKey) { wbDisp.textContent = state.wbKey.substring(0, 30) + '...' + state.wbKey.slice(-10); wbDisp.style.display = 'block'; } else { wbDisp.style.display = 'none'; }
+  const pplxDisp = document.getElementById('pplxKeyDisplay');
+  if (state.pplxKey) { pplxDisp.textContent = state.pplxKey.substring(0, 12) + '...' + state.pplxKey.slice(-8); pplxDisp.style.display = 'block'; } else { pplxDisp.style.display = 'none'; }
+  updateTopbarApiStatus();
+  document.getElementById('kpiUnanswered').textContent = '—';
+  document.getElementById('kpiFetched').textContent = '0';
+  document.getElementById('kpiSent').textContent = '0';
+  document.getElementById('kpiGenerated').textContent = '0';
+  document.getElementById('reviewsList').innerHTML = '<div class="empty"><div class="empty-icon">💬</div><h3>Отзывы не загружены</h3><p>Нажмите «Загрузить»</p><button class="btn btn-primary" style="margin-top: var(--space-4)" onclick="loadFeedbacks()">Загрузить отзывы</button></div>';
+  renderBrandList();
+  document.getElementById('autoToggle').classList.remove('on');
+  document.getElementById('autoToggleLabel').textContent = 'Авторежим выключен';
+  document.getElementById('autoStatus').innerHTML = '<div class="status-bar status-warn"><div class="dot"></div> Авторежим не запущен</div>';
+  document.getElementById('dashStatus').innerHTML = '';
+  document.getElementById('reviewsStatus').innerHTML = '';
+  document.getElementById('mainLog').innerHTML = '<div class="log-line"><span class="log-time">—</span><span>Лог пуст.</span></div>';
+  document.getElementById('autoLog').innerHTML = '<div class="log-line"><span class="log-time">—</span><span>Лог авторежима пуст</span></div>';
+}
+
+// ══════════════════════════════════════════════════════════════
+// THEME
+// ══════════════════════════════════════════════════════════════
+window.toggleTheme = function() {
+  const h = document.documentElement;
+  const cur = h.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  h.setAttribute('data-theme', next);
+  lsSet('theme', next);
+  const btn = document.querySelector('[data-theme-toggle]');
+  if (btn) btn.innerHTML = cur === 'dark' ? '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>' : '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>';
+};
+(function() { const s = lsGet('theme', 'light'); document.documentElement.setAttribute('data-theme', s); })();
+
+// ══════════════════════════════════════════════════════════════
+// NAV / TOAST / LOG / HELPERS
+// ══════════════════════════════════════════════════════════════
+const pageMap = { dashboard: 0, reviews: 1, automode: 2, settings: 3, log: 4 };
+window.showPage = function(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  const navBtns = document.querySelectorAll('.nav-item');
+  if (pageMap[name] !== undefined && navBtns[pageMap[name]]) navBtns[pageMap[name]].classList.add('active');
+};
+window.showTab = function(tabId, btn) {
+  document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(tabId).style.display = 'block';
+  btn.classList.add('active');
+};
+function toast(msg, type = '') { const el = document.createElement('div'); el.className = 'toast' + (type ? ' ' + type : ''); el.textContent = msg; document.getElementById('toastContainer').appendChild(el); setTimeout(() => el.remove(), 3000); }
+window.toast = toast;
+function addLog(msg, type = '') {
+  const t = new Date().toLocaleTimeString('ru-RU');
+  const box = document.getElementById('mainLog');
+  const autoBox = document.getElementById('autoLog');
+  const line = `<div class="log-line"><span class="log-time">${t}</span><span class="log-${type || 'ok'}">${msg}</span></div>`;
+  if (box.querySelector('.log-time')?.textContent === '—') box.innerHTML = '';
+  box.innerHTML = line + box.innerHTML;
+  if (type === 'info' || type === 'ok') { if (autoBox.querySelector('.log-time')?.textContent === '—') autoBox.innerHTML = ''; autoBox.innerHTML = line + autoBox.innerHTML; }
+}
+window.addLog = addLog;
+window.clearLog = function() { document.getElementById('mainLog').innerHTML = '<div class="log-line"><span class="log-time">—</span><span>Лог очищен.</span></div>'; };
+function setStatus(elId, type, msg) { const el = document.getElementById(elId); if (!el) return; const m = { ok: 'status-ok', error: 'status-err', warn: 'status-warn', info: 'status-info' }; el.innerHTML = `<div class="status-bar ${m[type] || 'status-info'}"><div class="dot"></div>${msg}</div>`; }
+function escHtml(str) { if (!str) return ''; return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+window.escHtml = escHtml;
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function updateTopbarApiStatus() {
+  const el = document.getElementById('topbarApiStatus');
+  if (state.wbKey && state.pplxKey) { el.textContent = 'WB: ✓ · AI: ✓'; el.style.color = 'var(--color-success)'; }
+  else if (state.wbKey) { el.textContent = 'WB: ✓'; el.style.color = 'var(--color-success)'; }
+  else { el.textContent = 'API: не настроен'; el.style.color = 'var(--color-text-muted)'; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// API KEYS
+// ══════════════════════════════════════════════════════════════
+window.saveWbKey = function() { const v = document.getElementById('wbApiKey').value.trim(); if (!v) { toast('Введите ключ', 'error'); return; } state.wbKey = v; pSet('wbKey', v); document.getElementById('wbKeyDisplay').textContent = v.substring(0,30)+'...'+v.slice(-10); document.getElementById('wbKeyDisplay').style.display = 'block'; document.getElementById('wbApiKey').value = ''; updateTopbarApiStatus(); addLog('WB API ключ сохранён в облако', 'ok'); toast('WB ключ сохранён', 'success'); };
+window.clearWbKey = function() { state.wbKey = ''; pSet('wbKey', ''); document.getElementById('wbKeyDisplay').style.display = 'none'; updateTopbarApiStatus(); addLog('WB API ключ удалён', 'info'); toast('WB ключ удалён'); };
+window.savePplxKey = function() { const v = document.getElementById('pplxApiKey').value.trim(); if (!v) { toast('Введите ключ', 'error'); return; } state.pplxKey = v; pSet('pplxKey', v); document.getElementById('pplxKeyDisplay').textContent = v.substring(0,12)+'...'+v.slice(-8); document.getElementById('pplxKeyDisplay').style.display = 'block'; document.getElementById('pplxApiKey').value = ''; updateTopbarApiStatus(); addLog('Perplexity API ключ сохранён в облако', 'ok'); toast('Perplexity ключ сохранён', 'success'); };
+window.clearPplxKey = function() { state.pplxKey = ''; pSet('pplxKey', ''); document.getElementById('pplxKeyDisplay').style.display = 'none'; updateTopbarApiStatus(); addLog('Perplexity API ключ удалён', 'info'); toast('Perplexity ключ удалён'); };
+window.savePrompt = function() { state.systemPrompt = document.getElementById('systemPrompt').value; pSet('systemPrompt', state.systemPrompt); toast('Промпт сохранён', 'success'); addLog('Промпт обновлён в облаке', 'info'); };
+window.saveFilters = function() { pSet('filterMinStars', document.getElementById('filterMinStars').value); pSet('filterMinLength', document.getElementById('filterMinLength').value); pSet('filterStopWords', document.getElementById('filterStopWords').value); toast('Фильтры сохранены', 'success'); addLog('Фильтры обновлены', 'info'); };
+
+// ══════════════════════════════════════════════════════════════
+// WB / PPLX API CALLS
+// ══════════════════════════════════════════════════════════════
+window.pingWB = async function() {
+  if (!state.wbKey) { toast('Сначала введите WB API ключ', 'error'); return; }
+  const el = document.getElementById('wbPingResult');
+  el.innerHTML = '<div class="status-bar status-info"><div class="spinner"></div> Проверяем...</div>';
+  try { const r = await fetch('https://feedbacks-api.wildberries.ru/ping', { headers: { 'Authorization': state.wbKey } }); if (r.ok) { const d = await r.json(); el.innerHTML = `<div class="status-bar status-ok"><div class="dot"></div> OK: ${d.Status||'OK'}</div>`; toast('WB подключён!', 'success'); } else { const e = await r.json().catch(()=>({})); el.innerHTML = `<div class="status-bar status-err"><div class="dot"></div> Ошибка ${r.status}: ${e.title||r.statusText}</div>`; } } catch(e) { el.innerHTML = `<div class="status-bar status-err"><div class="dot"></div> ${e.message}</div>`; }
+};
+window.testPplx = async function() {
+  if (!state.pplxKey) { toast('Введите Perplexity API ключ', 'error'); return; }
+  const el = document.getElementById('pplxTestResult');
+  el.innerHTML = '<div class="status-bar status-info"><div class="spinner"></div> Тестируем...</div>';
+  const reply = await generateAIReply('5', 'Тестовый товар', 'Отличный товар', 'Качество', 'Нет');
+  if (reply.startsWith('Ошибка:')) { el.innerHTML = `<div class="status-bar status-err"><div class="dot"></div> ${reply}</div>`; }
+  else { el.innerHTML = `<div class="status-bar status-ok"><div class="dot"></div> Успешно!</div><div class="ai-reply-box"><strong>Тест:</strong>${reply}</div>`; toast('Perplexity работает!', 'success'); }
+};
+
+async function generateAIReply(stars, product, text, pros, cons) {
+  if (!state.pplxKey) return 'Ошибка: Perplexity API ключ не введён';
+  const prompt = state.systemPrompt.replace('{stars}', stars).replace('{product}', product).replace('{text}', text||'не указан').replace('{pros}', pros||'не указаны').replace('{cons}', cons||'не указаны');
+  try { const r = await fetch('https://api.perplexity.ai/chat/completions', { method: 'POST', headers: { 'Authorization': 'Bearer ' + state.pplxKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'sonar', messages: [{ role: 'system', content: 'Ты помощник менеджера маркетплейса. Отвечай только текстом ответа на отзыв, без пояснений.' }, { role: 'user', content: prompt }], max_tokens: 200, temperature: 0.7 }) }); if (r.ok) { const d = await r.json(); return d.choices?.[0]?.message?.content?.trim() || 'Ошибка: пустой ответ'; } else { const e = await r.json().catch(()=>({})); return `Ошибка ${r.status}: ${e.error?.message || r.statusText}`; } } catch(e) { return 'Ошибка: ' + e.message; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// FEEDBACKS
+// ══════════════════════════════════════════════════════════════
+window.loadFeedbacks = async function() {
+  if (!state.wbKey) { setStatus('reviewsStatus','error','⚠️ WB API ключ не введён.'); setStatus('dashStatus','error','⚠️ WB API ключ не введён.'); toast('Введите WB API ключ','error'); return; }
+  const spinner = document.getElementById('loadBtnSpinner'); if (spinner) spinner.style.display = 'inline-flex';
+  setStatus('reviewsStatus','info','⏳ Загружаем...'); setStatus('dashStatus','info','⏳ Загружаем...');
+  addLog('Запрос отзывов WB...', 'info');
+  try { const c = await fetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/count-unanswered', { headers: { 'Authorization': state.wbKey } }); if (c.ok) { const d = await c.json(); document.getElementById('kpiUnanswered').textContent = d.data?.countUnanswered ?? '?'; } } catch {}
+  try {
+    const r = await fetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks?isAnswered=false&take=50&skip=0&order=dateDesc', { headers: { 'Authorization': state.wbKey } });
+    if (spinner) spinner.style.display = 'none';
+    if (r.ok) { const d = await r.json(); const fb = d.data?.feedbacks || []; state.feedbacks = fb; document.getElementById('kpiFetched').textContent = fb.length; addLog(`Загружено ${fb.length} отзывов`, 'ok');
+      if (!fb.length) { setStatus('reviewsStatus','ok','✅ Нет неотвеченных!'); setStatus('dashStatus','ok','✅ Нет неотвеченных!'); document.getElementById('reviewsList').innerHTML = '<div class="empty"><div class="empty-icon">🎉</div><h3>Все обработаны!</h3></div>'; }
+      else { setStatus('reviewsStatus','ok',`✅ Загружено ${fb.length}`); setStatus('dashStatus','ok',`✅ ${fb.length} отзывов`); renderReviews(fb); if (state.wbKey) prefetchBrandsForFeedbacks(fb); }
+      toast(`Загружено ${fb.length} отзывов`, 'success');
+    } else { const e = await r.json().catch(()=>({})); if (spinner) spinner.style.display='none'; const msg = `WB API ${r.status}: ${e.errorText||e.title||r.statusText}`; setStatus('reviewsStatus','error','❌ '+msg); setStatus('dashStatus','error','❌ '+msg); addLog(msg,'err'); toast(msg,'error'); }
+  } catch(e) { if (spinner) spinner.style.display='none'; setStatus('reviewsStatus','error','❌ '+e.message); addLog(e.message,'err'); toast(e.message,'error'); }
+};
+
+function renderReviews(feedbacks) {
+  const c = document.getElementById('reviewsList'); if (!feedbacks.length) { c.innerHTML = '<div class="empty"><div class="empty-icon">💬</div><h3>Нет</h3></div>'; return; }
+  c.innerHTML = feedbacks.map((fb, i) => { const s = '★'.repeat(fb.productValuation||0)+'☆'.repeat(5-(fb.productValuation||0)); const sc = fb.productValuation>=4?'kpi-success':fb.productValuation<=2?'kpi-warn':''; const p=fb.productDetails?.productName||'Неизв. товар'; const u=fb.userName||'Покупатель'; const d=fb.createdDate?new Date(fb.createdDate).toLocaleDateString('ru-RU'):''; const t=fb.text||''; const pr=fb.pros||''; const cn=fb.cons||''; const er=state.aiReplies[fb.id]||'';
+    return `<div class="review-card" id="review-${fb.id}"><div class="review-header"><div class="review-meta"><div class="review-user">${escHtml(u)}</div><div class="stars ${sc}">${s}</div><div class="review-date">${d}</div></div><span class="badge ${fb.productValuation>=4?'badge-success':fb.productValuation<=2?'badge-warning':'badge-neutral'}">${fb.productValuation}★</span></div>${t?`<div class="review-text">${escHtml(t)}</div>`:'<div style="color:var(--color-text-faint);font-size:var(--text-xs)">Без текста</div>'}${pr||cn?`<div style="display:flex;gap:var(--space-2);margin-top:var(--space-2)">${pr?`<span class="badge badge-success">+ ${escHtml(pr)}</span>`:''}${cn?`<span class="badge badge-warning">− ${escHtml(cn)}</span>`:''}</div>`:''}<div class="review-product">🏷 ${escHtml(p)} ${fb.productDetails?.nmId?' • nmId: '+fb.productDetails.nmId:''}</div><div id="brandBadge-${fb.id}" style="margin-top:var(--space-1)"></div>${er?`<div class="ai-reply-box"><strong>✨ AI-ответ</strong><textarea class="reply-textarea" id="reply-${fb.id}">${escHtml(er)}</textarea></div>`:`<div id="replyBox-${fb.id}"></div>`}<div class="review-actions"><button class="btn btn-secondary btn-sm" onclick="generateOneAI('${fb.id}',${i})">✨ AI-ответ</button><button class="btn btn-primary btn-sm" onclick="sendReply('${fb.id}')">📤 Отправить</button></div><div id="sendStatus-${fb.id}"></div></div>`; }).join('');
+}
+
+window.generateOneAI = async function(fbId, idx) {
+  const fb = state.feedbacks.find(f=>f.id===fbId); if (!fb) return;
+  const btn = event.currentTarget; btn.disabled = true; btn.innerHTML = '<div class="spinner"></div>';
+  const reply = await generateAIReply(fb.productValuation, fb.productDetails?.productName||'товар', fb.text, fb.pros, fb.cons);
+  btn.disabled = false; btn.textContent = '✨ AI-ответ';
+  if (reply.startsWith('Ошибка:')) { addLog(reply,'err'); toast(reply,'error'); return; }
+  state.aiReplies[fbId] = reply; state.kpiGenerated++; document.getElementById('kpiGenerated').textContent = state.kpiGenerated;
+  const box = document.getElementById('replyBox-'+fbId); if (box) box.innerHTML = `<div class="ai-reply-box"><strong>✨ AI-ответ</strong><textarea class="reply-textarea" id="reply-${fbId}">${escHtml(reply)}</textarea></div>`;
+  // Apply brand signature
+  const nmId = String(fb.productDetails?.nmId||'');
+  if (nmId && state.brands.length) { if (!(nmId in state.brandCache)) await fetchBrandsByNmIds([nmId]); const ta = document.getElementById('reply-'+fbId); if (ta) { const sig = getBrandSignatureByNmId(nmId); if (sig && !ta.value.includes(sig)) ta.value = ta.value.trimEnd()+'\n\n'+sig; } }
+  toast('Ответ сгенерирован!', 'success');
+};
+
+window.generateAllAI = async function() {
+  if (!state.feedbacks.length) { toast('Сначала загрузите отзывы','error'); return; }
+  if (!state.pplxKey) { toast('Введите Perplexity ключ','error'); return; }
+  const btn = document.getElementById('genAllBtn'); btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Генерация...';
+  // Pre-fetch brands
+  if (state.wbKey) { const ids = [...new Set(state.feedbacks.map(f=>String(f.productDetails?.nmId||'')).filter(Boolean))]; await fetchBrandsByNmIds(ids); }
+  let count = 0;
+  for (const fb of state.feedbacks) {
+    if (state.aiReplies[fb.id]) continue;
+    const reply = await generateAIReply(fb.productValuation, fb.productDetails?.productName||'товар', fb.text, fb.pros, fb.cons);
+    if (!reply.startsWith('Ошибка:')) { state.aiReplies[fb.id] = reply; state.kpiGenerated++; count++;
+      const box = document.getElementById('replyBox-'+fb.id); if (box) box.innerHTML = `<div class="ai-reply-box"><strong>✨ AI-ответ</strong><textarea class="reply-textarea" id="reply-${fb.id}">${escHtml(reply)}</textarea></div>`;
+      const nmId = String(fb.productDetails?.nmId||''); if (nmId && state.brands.length) { const ta = document.getElementById('reply-'+fb.id); if (ta) { const sig = getBrandSignatureByNmId(nmId); if (sig && !ta.value.includes(sig)) ta.value = ta.value.trimEnd()+'\n\n'+sig; } }
+    }
+    await sleep(500);
+  }
+  document.getElementById('kpiGenerated').textContent = state.kpiGenerated;
+  btn.disabled = false; btn.textContent = '✨ Сгенерировать все AI'; toast(`${count} ответов!`, 'success'); addLog(`Сгенерировано: ${count}`, 'ok');
+};
+
+window.sendReply = async function(fbId) {
+  if (!state.wbKey) { toast('WB ключ не введён','error'); return; }
+  const ta = document.getElementById('reply-'+fbId); if (!ta) { toast('Сначала сгенерируйте ответ','error'); return; }
+  const text = ta.value.trim(); if (!text || text.length<2) { toast('Текст пустой','error'); return; }
+  const se = document.getElementById('sendStatus-'+fbId); se.innerHTML = '<div class="status-bar status-info" style="margin-top:var(--space-2)"><div class="spinner"></div> Отправляем...</div>';
+  try { const r = await fetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer', { method:'POST', headers:{'Authorization':state.wbKey,'Content-Type':'application/json'}, body:JSON.stringify({id:fbId,text}) });
+    if (r.status===200||r.status===204) { se.innerHTML='<div class="status-bar status-ok" style="margin-top:var(--space-2)"><div class="dot"></div> ✅ Отправлено!</div>'; state.kpiSent++; document.getElementById('kpiSent').textContent=state.kpiSent; toast('Отправлено!','success'); setTimeout(()=>{const c=document.getElementById('review-'+fbId);if(c)c.style.opacity='0.4';},1500); }
+    else { const e = await r.json().catch(()=>({})); const msg=`${r.status}: ${e.errorText||e.title||r.statusText}`; se.innerHTML=`<div class="status-bar status-err" style="margin-top:var(--space-2)"><div class="dot"></div> ❌ ${msg}</div>`; toast(msg,'error'); }
+  } catch(e) { se.innerHTML=`<div class="status-bar status-err" style="margin-top:var(--space-2)"><div class="dot"></div> ❌ ${e.message}</div>`; toast(e.message,'error'); }
+};
+
+// ══════════════════════════════════════════════════════════════
+// AUTO MODE
+// ══════════════════════════════════════════════════════════════
+window.toggleAutoMode = function() {
+  const toggle=document.getElementById('autoToggle'),label=document.getElementById('autoToggleLabel'),se=document.getElementById('autoStatus');
+  if (state.autoActive) { clearInterval(state.autoInterval); state.autoActive=false; toggle.classList.remove('on'); label.textContent='Авторежим выключен'; se.innerHTML='<div class="status-bar status-warn"><div class="dot"></div> Остановлен</div>'; toast('Авторежим выключен'); }
+  else { if (!state.wbKey) { toast('Введите WB ключ','error'); return; } const m=Math.max(parseInt(document.getElementById('autoInterval').value)||10,5); const ms=m*60000; state.autoActive=true; toggle.classList.add('on'); label.textContent=`Активен (каждые ${m} мин)`; se.innerHTML=`<div class="status-bar status-ok"><div class="dot"></div> Авторежим: проверка каждые ${m} мин</div>`; toast('Авторежим запущен','success');
+    state.autoInterval=setInterval(async()=>{ addLog('Авторежим: проверка...','info'); await window.loadFeedbacks(); const mode=document.getElementById('autoModeType').value;
+      if (mode==='auto-send'&&state.feedbacks.length&&state.pplxKey) { for (const fb of state.feedbacks) { if (!state.aiReplies[fb.id]) { const r=await generateAIReply(fb.productValuation,fb.productDetails?.productName||'товар',fb.text,fb.pros,fb.cons); if (!r.startsWith('Ошибка:')) { state.aiReplies[fb.id]=r; try { const res=await fetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer',{method:'POST',headers:{'Authorization':state.wbKey,'Content-Type':'application/json'},body:JSON.stringify({id:fb.id,text:r})}); if(res.status===200||res.status===204){state.kpiSent++;document.getElementById('kpiSent').textContent=state.kpiSent;addLog(`Авто: отправлен ${fb.id.substring(0,8)}`,'ok');}} catch{} await sleep(1000); } } } }
+    }, ms); }
+};
+
+// ══════════════════════════════════════════════════════════════
+// BRANDS
+// ══════════════════════════════════════════════════════════════
+async function fetchBrandsByNmIds(nmIds) {
+  if (!state.wbKey||!nmIds.length) return {};
+  const uc=nmIds.filter(id=>id&&!(id in state.brandCache)); if (!uc.length) return state.brandCache;
+  try { const r=await fetch('https://content-api.wildberries.ru/content/v2/get/cards/list',{method:'POST',headers:{'Authorization':state.wbKey,'Content-Type':'application/json'},body:JSON.stringify({settings:{cursor:{limit:100},filter:{nmIds:uc.map(Number),withPhoto:-1}}})}); if (r.ok){const d=await r.json();(d.cards||[]).forEach(c=>{if(c.nmID&&c.brand)state.brandCache[String(c.nmID)]=c.brand;});} } catch {}
+  return state.brandCache;
+}
+async function prefetchBrandsForFeedbacks(feedbacks) {
+  const ids=[...new Set(feedbacks.map(f=>f.productDetails?.nmId).filter(Boolean).map(String))]; if(!ids.length)return; await fetchBrandsByNmIds(ids);
+  for (const fb of feedbacks) { const nmId=String(fb.productDetails?.nmId||''); const brand=state.brandCache[nmId]; if(brand){const el=document.getElementById('brandBadge-'+fb.id);if(el){const m=state.brands.find(b=>b.enabled&&brand.toLowerCase()===b.keyword.toLowerCase());el.innerHTML=`<span class="badge ${m?m.color:'badge-neutral'}">🏷 ${escHtml(brand)}${m?' · подпись ✓':''}</span>`;}}}
+}
+function getBrandSignatureByNmId(nmId) { if(!nmId||!state.brands.length)return''; const b=state.brandCache[String(nmId)]; if(!b)return''; const m=state.brands.find(x=>x.enabled&&b.toLowerCase()===x.keyword.toLowerCase()); return m?m.signature:''; }
+
+function renderBrandList() {
+  const el=document.getElementById('brandList'); if(!el)return;
+  if(!state.brands.length){el.innerHTML='<div style="text-align:center;padding:var(--space-6);color:var(--color-text-muted);font-size:var(--text-sm)">Нет брендов. Добавьте ниже.</div>';return;}
+  el.innerHTML=state.brands.map((b,i)=>`<div style="display:grid;grid-template-columns:auto 1fr auto auto;gap:var(--space-3);align-items:center;padding:var(--space-3);background:var(--color-surface-2);border-radius:var(--radius-md);border:1px solid oklch(from var(--color-text) l c h / 0.07)"><div class="toggle ${b.enabled?'on':''}" onclick="toggleBrand(${i})"></div><div><div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-1)"><span class="badge ${b.color}">${escHtml(b.keyword)}</span>${!b.enabled?'<span class="badge badge-neutral">выкл</span>':''}</div><div style="font-size:var(--text-xs);color:var(--color-text-muted);white-space:pre-wrap;max-width:60ch">${escHtml(b.signature)}</div></div><button class="btn btn-secondary btn-sm" onclick="editBrand(${i})">✏️</button><button class="btn btn-secondary btn-sm" onclick="deleteBrand(${i})" style="color:var(--color-notification)">✕</button></div>`).join('');
+}
+window.renderBrandList = renderBrandList;
+window.addBrand = function() { const k=document.getElementById('newBrandKeyword').value.trim(),s=document.getElementById('newBrandSignature').value.trim(),c=document.getElementById('newBrandColor').value; if(!k){toast('Введите бренд','error');return;} if(!s){toast('Введите подпись','error');return;} if(state.brands.some(b=>b.keyword.toLowerCase()===k.toLowerCase())){toast('Уже есть','error');return;} state.brands.push({keyword:k,signature:s,color:c,enabled:true}); pSet('brands',state.brands); renderBrandList(); document.getElementById('newBrandKeyword').value=''; document.getElementById('newBrandSignature').value=''; updateBrandPreview(); toast(`Бренд «${k}» добавлен`,'success'); };
+window.deleteBrand = function(i) { const n=state.brands[i].keyword; state.brands.splice(i,1); pSet('brands',state.brands); renderBrandList(); toast(`Бренд «${n}» удалён`); };
+window.toggleBrand = function(i) { state.brands[i].enabled=!state.brands[i].enabled; pSet('brands',state.brands); renderBrandList(); };
+window.editBrand = function(i) { const b=state.brands[i]; document.getElementById('newBrandKeyword').value=b.keyword; document.getElementById('newBrandSignature').value=b.signature; document.getElementById('newBrandColor').value=b.color; updateBrandPreview(); window.deleteBrand(i); toast('Редактирование'); };
+function updateBrandPreview() { const s=document.getElementById('newBrandSignature').value.trim(),p=document.getElementById('brandPreview'); if(!p)return; p.textContent=s?'Спасибо за ваш отзыв!\n\n'+s:'Спасибо за ваш отзыв!'; }
+window.testSignature = async function() { const v=document.getElementById('testProductName').value.trim(),el=document.getElementById('testSignatureResult'); if(!v){el.innerHTML='<div class="status-bar status-warn"><div class="dot"></div>Введите nmId</div>';return;} el.innerHTML='<div class="status-bar status-info"><div class="spinner"></div> Запрашиваем...</div>'; await fetchBrandsByNmIds([v]); const b=state.brandCache[String(v)]; if(!b){el.innerHTML='<div class="status-bar status-warn"><div class="dot"></div>Бренд не найден для '+escHtml(v)+'</div>';return;} const sig=getBrandSignatureByNmId(v),m=state.brands.find(x=>x.enabled&&b.toLowerCase()===x.keyword.toLowerCase()); if(sig&&m){el.innerHTML=`<div class="status-bar status-ok" style="margin-bottom:var(--space-2)"><div class="dot"></div> ${escHtml(b)} → <span class="badge ${m.color}">${escHtml(m.keyword)}</span> ✓</div><div class="ai-reply-box"><strong>Превью:</strong>Спасибо!\n\n${escHtml(sig)}</div>`;}else{el.innerHTML=`<div class="status-bar status-warn"><div class="dot"></div>Бренд: ${escHtml(b)}. Подпись не настроена.</div>`;} };
+document.addEventListener('input',e=>{if(e.target.id==='newBrandSignature'||e.target.id==='newBrandKeyword')updateBrandPreview();});
+
+// ══════════════════════════════════════════════════════════════
+// INIT (called after Firebase SDK loads)
+// ══════════════════════════════════════════════════════════════
+function _appInit() {
+  const config = lsGet('firebaseConfig', null);
+  if (config) {
+    document.getElementById('setupOverlay').classList.add('hidden');
+    initFirebase(config);
+  }
+  // else: setup overlay is shown, button is now enabled
+}
+
+</script>
+</body>
+</html>
