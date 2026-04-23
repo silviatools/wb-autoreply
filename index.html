@@ -150,6 +150,8 @@ textarea { resize: vertical; min-height: 100px; font-family: var(--font-body); }
 .badge-warning { background: var(--color-warning-highlight); color: var(--color-warning); }
 .badge-error   { background: var(--color-error-highlight); color: var(--color-error); }
 .badge-neutral { background: var(--color-surface-offset); color: var(--color-text-muted); }
+.badge-accent { background: var(--color-primary-highlight); color: var(--color-primary); }
+.badge-draft { background: var(--color-surface-dynamic); color: var(--color-text-muted); border: 1px dashed var(--color-border); }
 .stars { color: #f59e0b; font-size: 14px; letter-spacing: -2px; }
 .review-card { background: var(--color-surface); border: 1px solid oklch(from var(--color-text) l c h / 0.08); border-radius: var(--radius-lg); padding: var(--space-4); box-shadow: var(--shadow-sm); transition: box-shadow var(--transition); }
 .review-card:hover { box-shadow: var(--shadow-md); }
@@ -729,12 +731,13 @@ async function saveStatusSyncSettings() {
 }
 
 function deriveFeedbackStatus(fb) {
-  if (fb.statusError) return { code: 'error', label: 'Ошибка', color: 'badge-warning' };
-  if (fb.replySentMode === 'auto') return { code: 'answered-auto', label: 'Отвечен автоответом', color: 'badge-success' };
-  if (fb.replySentMode === 'manual') return { code: 'answered-manual', label: 'Отвечен вручную', color: 'badge-accent' };
-  if (fb.answered) return { code: 'answered-wb', label: 'Отвечен в WB', color: 'badge-neutral' };
-  if (fb.aiReplyDraft) return { code: 'ai-draft', label: 'AI-черновик', color: 'badge-neutral' };
-  return { code: 'new', label: 'Новый', color: 'badge-warning' };
+  if (fb.statusError) return { code: 'error', label: '⚠️ Ошибка', color: 'badge-warning' };
+  if (fb.replySentMode === 'auto') return { code: 'answered-auto', label: '🤖 Автоответ', color: 'badge-success' };
+  if (fb.replySentMode === 'manual') return { code: 'answered-manual', label: '✍️ Вручную', color: 'badge-accent' };
+  if (fb.replySentMode === 'wb') return { code: 'answered-wb', label: '✅ Отвечен в WB', color: 'badge-neutral' };
+  if (fb.answered) return { code: 'answered-wb', label: '✅ Отвечен в WB', color: 'badge-neutral' };
+  if (fb.aiReplyDraft) return { code: 'ai-draft', label: '📝 AI-черновик', color: 'badge-draft' };
+  return { code: 'new', label: '🆕 Новый', color: 'badge-warning' };
 }
 
 function refreshHistoryKpis(items) {
@@ -781,7 +784,7 @@ function renderStatusHistory(items) {
     const status = deriveFeedbackStatus(fb);
     const product = fb.productDetails?.productName || 'Неизв. товар';
     const date = fb.createdDate ? new Date(fb.createdDate).toLocaleString('ru-RU') : '';
-    return `<div class="review-card"><div class="review-header"><div class="review-meta"><div class="review-user">${escHtml(fb.userName || 'Покупатель')}</div><div class="review-date">${date}</div></div><span class="badge ${status.color}">${status.label}</span></div><div class="review-product">🏷 ${escHtml(product)} ${fb.productDetails?.nmId ? ' • nmId: ' + fb.productDetails.nmId : ''}</div>${fb.text ? `<div class="review-text">${escHtml(fb.text)}</div>` : '<div style="color:var(--color-text-faint);font-size:var(--text-xs)">Без текста</div>'}${fb.aiReplyDraft ? `<div class="ai-reply-box"><strong>AI-черновик</strong><div>${escHtml(fb.aiReplyDraft)}</div></div>` : ''}${fb.answerText ? `<div class="ai-reply-box"><strong>Ответ в WB</strong><div>${escHtml(fb.answerText)}</div></div>` : ''}</div>`;
+    return `<div class="review-card"><div class="review-header"><div class="review-meta"><div class="review-user">${escHtml(fb.userName || 'Покупатель')}</div><div class="stars">${'★'.repeat(fb.productValuation||0)+'☆'.repeat(5-(fb.productValuation||0))}</div><div class="review-date">${date}</div></div><span class="badge ${status.color}">${status.label}</span></div><div class="review-product">🏷 ${escHtml(product)} ${fb.productDetails?.nmId ? ' • nmId: ' + fb.productDetails.nmId : ''}</div>${fb.text ? `<div class="review-text">${escHtml(fb.text)}</div>` : '<div style="color:var(--color-text-faint);font-size:var(--text-xs)">Без текста</div>'}${fb.aiReplyDraft && !fb.answered ? `<div class="ai-reply-box" style="opacity:.8"><strong>📝 AI-черновик</strong><div>${escHtml(fb.aiReplyDraft)}</div></div>` : ''}${fb.answerText ? `<div class="ai-reply-box"><strong>Отправленный ответ</strong><div>${escHtml(fb.answerText)}</div></div>` : ''}<div style="font-size:var(--text-xs);color:var(--color-text-muted);margin-top:var(--space-2)">${fb.repliedAt ? '📅 Отвечен: ' + new Date(fb.repliedAt).toLocaleString('ru-RU') : ''} ${fb.syncedAt ? '• Загружен: ' + new Date(fb.syncedAt).toLocaleString('ru-RU') : ''}</div></div>`;
   }).join('');
   meta.textContent = `Показано ${Math.min(items.length, 300)} из ${items.length}. Последнее обновление статусов: ${state.lastFeedbackSyncAt ? new Date(state.lastFeedbackSyncAt).toLocaleString('ru-RU') : 'не было'}`;
 }
@@ -819,10 +822,15 @@ async function refreshFeedbackStatuses(manual = false) {
         next.cons = live.cons || next.cons;
         next.productValuation = Number(live.productValuation || next.productValuation || 0);
         next.productDetails = live.productDetails || next.productDetails || {};
-        next.answered = !!live.answer;
-        next.answerText = live.answer?.text || next.answerText || '';
+        const wasAnsweredByUs = !!item.replySentMode;
+        if (!!live.answer) {
+          next.answered = true;
+          next.answerText = live.answer?.text || next.answerText || '';
+          if (!wasAnsweredByUs) next.replySentMode = 'wb';
+        }
       } else if (!next.answered) {
         next.answered = true;
+        if (!next.replySentMode) next.replySentMode = 'wb';
       }
       if (JSON.stringify(next) !== JSON.stringify(item)) changed++;
       return next;
@@ -834,6 +842,7 @@ async function refreshFeedbackStatuses(manual = false) {
     await pSet('lastFeedbackSyncAt', state.lastFeedbackSyncAt);
     renderStatusHistory(getStatusHistoryFiltered());
     renderHistoryReviews(getFilteredHistory());
+    syncReviewsPageFromDatabase();
     refreshAllDashboards();
     addLog(`Статусы отзывов: обновлено ${changed} записей`, 'ok');
     if (manual) toast(`Статусы обновлены: ${changed}`, 'success');
@@ -934,6 +943,7 @@ function refreshUIFromState() {
   bindHistoryFilters();
   renderHistoryReviews(state.allFeedbacks || []);
   renderStatusHistory(state.allFeedbacks || []);
+  syncReviewsPageFromDatabase();
   refreshAllDashboards();
   const statusToggle = document.getElementById('statusSyncEnabledToggle');
   if (statusToggle) {
@@ -1010,7 +1020,7 @@ function refreshAllDashboards() {
   const drafts = all.filter(fb => fb.aiReplyDraft && !fb.answered).length;
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = String(val); };
   set('kpiUnanswered', unanswered);
-  set('kpiFetched', state.feedbacks?.length || 0);
+  set('kpiFetched', getActiveReviewQueue().length);
   set('kpiSent', autoAnswered + manualAnswered);
   set('kpiGenerated', drafts + autoAnswered + manualAnswered);
   set('historyTotalKpi', all.length);
@@ -1036,17 +1046,7 @@ async function importNewFeedbacks(options = {}) {
   state.lastFeedbackSyncAt = new Date().toISOString();
   await pSet('lastFeedbackSyncAt', state.lastFeedbackSyncAt);
   await persistAllFeedbacks();
-  if (renderCurrent) {
-    document.getElementById('kpiFetched').textContent = feedbacks.length;
-    if (feedbacks.length) {
-      renderReviews(feedbacks);
-      if (state.wbKey) prefetchBrandsForFeedbacks(feedbacks);
-    } else {
-      const rl = document.getElementById('reviewsList');
-      if (rl) rl.innerHTML = '<div class="empty"><div class="empty-icon">🎉</div><h3>Нет новых неотвеченных отзывов</h3></div>';
-    }
-    setStatus('reviewsStatus', 'ok', feedbacks.length ? `✅ Загружено ${feedbacks.length}` : '✅ Новых неотвеченных отзывов нет');
-  }
+  if (renderCurrent) syncReviewsPageFromDatabase();
   renderHistoryReviews(getFilteredHistory());
   renderStatusHistory(getStatusHistoryFiltered());
   refreshAllDashboards();
@@ -1054,6 +1054,29 @@ async function importNewFeedbacks(options = {}) {
   if (manual) toast(`Импортировано ${result.added} новых отзывов`, 'success');
   return { added: result.added, total: result.total, fetched: feedbacks.length };
 }
+
+function getActiveReviewQueue() {
+  return (state.allFeedbacks || []).filter(fb => {
+    const status = deriveFeedbackStatus(fb).code;
+    return status === 'new' || status === 'ai-draft';
+  }).sort((a, b) => new Date(b.createdDate || b.syncedAt || 0) - new Date(a.createdDate || a.syncedAt || 0));
+}
+
+function syncReviewsPageFromDatabase() {
+  state.feedbacks = getActiveReviewQueue();
+  const count = state.feedbacks.length;
+  const rl = document.getElementById('reviewsList');
+  if (count) {
+    renderReviews(state.feedbacks);
+    setStatus('reviewsStatus', 'ok', `✅ В очереди ${count} отзывов из базы`);
+    if (state.wbKey) prefetchBrandsForFeedbacks(state.feedbacks);
+  } else if (rl) {
+    rl.innerHTML = '<div class="empty"><div class="empty-icon">🎉</div><h3>Нет новых отзывов</h3><p>В базе нет отзывов со статусом «Новый» или «AI-черновик»</p><button class="btn btn-primary" style="margin-top: var(--space-4)" onclick="syncNewFeedbacks(true)">Подгрузить новые</button></div>';
+    setStatus('reviewsStatus', 'ok', '✅ В базе нет новых отзывов');
+  }
+  const fetched = document.getElementById('kpiFetched');
+  if (fetched) fetched.textContent = String(count);
+} 
 
 function bindHistoryFilters() {
   const ids = ['historySearch', 'historyMinStars', 'historyAnswerStatus'];
@@ -1258,7 +1281,7 @@ async function generateAIReply(stars, product, text, pros, cons) {
 window.loadFeedbacks = async function() {
   if (!state.wbKey) { toast('Введите WB API ключ', 'error'); return; }
   document.getElementById('loadBtnSpinner').style.display = 'inline-flex';
-  setStatus('reviewsStatus', 'info', '⏳ Загружаем отзывы и синхронизируем историю...');
+  setStatus('reviewsStatus', 'info', '⏳ Подгружаем новые отзывы в базу и обновляем очередь...');
   setStatus('dashStatus', 'info', '⏳ Загружаем отзывы...');
   try {
     await importNewFeedbacks({ manual: true, renderCurrent: true });
