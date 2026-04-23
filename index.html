@@ -651,8 +651,9 @@ async function loadProfileData() {
   state.pplxKey = await pGet('pplxKey', '');
   state.systemPrompt = await pGet('systemPrompt', DEFAULT_PROMPT);
   state.brands = await pGet('brands', []);
-  state.autoIntervalMinutes = Number(await pGet('autoIntervalMinutes', 15)) || 15;
+  state.autoIntervalMinutes = Math.max(15, Number(await pGet('autoIntervalMinutes', 15)) || 15);
   state.autoModeType = await pGet('autoModeType', 'generate-only');
+  if (!['generate-only', 'auto-send'].includes(state.autoModeType)) state.autoModeType = 'generate-only';
   state.autoRestorePending = !!(await pGet('autoActive', false));
   if (!Array.isArray(state.brands)) state.brands = [];
   state.brandCache = {};
@@ -686,6 +687,17 @@ function refreshUIFromState() {
   renderBrandList();
   document.getElementById('autoInterval').value = String(state.autoIntervalMinutes || 15);
   document.getElementById('autoModeType').value = state.autoModeType || 'generate-only';
+  document.getElementById('autoInterval').onchange = async (e) => {
+    state.autoIntervalMinutes = Math.max(15, parseInt(e.target.value) || 15);
+    e.target.value = String(state.autoIntervalMinutes);
+    await saveAutoSettings();
+    addLog(`Авторежим: интервал сохранён — ${state.autoIntervalMinutes} мин`, 'ok', 'both');
+  };
+  document.getElementById('autoModeType').onchange = async (e) => {
+    state.autoModeType = e.target.value || 'generate-only';
+    await saveAutoSettings();
+    addLog(`Авторежим: режим сохранён — ${state.autoModeType}`, 'ok', 'both');
+  };
   document.getElementById('autoToggle').classList.remove('on');
   document.getElementById('autoToggleLabel').textContent = 'Авторежим выключен';
   document.getElementById('autoStatus').innerHTML = '<div class="status-bar status-warn"><div class="dot"></div> Авторежим не запущен</div>';
@@ -875,12 +887,14 @@ window.toggleAutoMode = async function(isRestore = false) {
   const se = document.getElementById('autoStatus');
   const modeEl = document.getElementById('autoModeType');
   const intervalEl = document.getElementById('autoInterval');
-  const mode = modeEl.value;
-  const mins = Math.max(15, parseInt(intervalEl.value) || 15);
+  const mode = isRestore ? (state.autoModeType || 'generate-only') : (modeEl.value || 'generate-only');
+  const mins = isRestore ? (Math.max(15, Number(state.autoIntervalMinutes) || 15)) : (Math.max(15, parseInt(intervalEl.value) || 15));
   const ms = mins * 60000;
 
   state.autoIntervalMinutes = mins;
   state.autoModeType = mode;
+  modeEl.value = mode;
+  intervalEl.value = String(mins);
 
   if (state.autoActive) {
     clearInterval(state.autoInterval);
