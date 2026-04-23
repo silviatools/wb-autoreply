@@ -993,6 +993,12 @@ async function saveFeedbackHistory(items) {
   return { added, total: state.allFeedbacks.length };
 }
 
+async function persistAllFeedbacks() {
+  const payload = {};
+  (state.allFeedbacks || []).forEach(item => { if (item && item.id) payload[item.id] = item; });
+  await pSet('feedbackHistory', payload);
+}
+
 function bindHistoryFilters() {
   const ids = ['historySearch', 'historyMinStars', 'historyAnswerStatus'];
   ids.forEach(id => {
@@ -1234,7 +1240,7 @@ window.generateOneAI = async function(fbId, idx) {
   const box = document.getElementById('replyBox-'+fbId); if (box) box.innerHTML = `<div class="ai-reply-box"><strong>✨ AI-ответ</strong><textarea class="reply-textarea" id="reply-${fbId}">${escHtml(reply)}</textarea></div>`;
   const nmId = String(fb.productDetails?.nmId||'');
   const ta = document.getElementById('reply-'+fbId);
-  if (ta) { ta.value = await applyBrandSignatureToReply(ta.value, nmId); const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fbId)); if (item) { item.aiReplyDraft = ta.value; item.aiReplyGeneratedAt = new Date().toISOString(); } }
+  if (ta) { ta.value = await applyBrandSignatureToReply(ta.value, nmId); const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fbId)); if (item) { item.aiReplyDraft = ta.value; item.aiReplyGeneratedAt = new Date().toISOString(); await persistAllFeedbacks(); } }
   toast('Ответ сгенерирован!', 'success');
 };
 
@@ -1250,7 +1256,7 @@ window.generateAllAI = async function() {
     const reply = await generateAIReply(fb.productValuation, fb.productDetails?.productName||'товар', fb.text, fb.pros, fb.cons);
     if (!reply.startsWith('Ошибка:')) { state.aiReplies[fb.id] = reply; state.kpiGenerated++; count++;
       const box = document.getElementById('replyBox-'+fb.id); if (box) box.innerHTML = `<div class="ai-reply-box"><strong>✨ AI-ответ</strong><textarea class="reply-textarea" id="reply-${fb.id}">${escHtml(reply)}</textarea></div>`;
-      const nmId = String(fb.productDetails?.nmId||''); const ta = document.getElementById('reply-'+fb.id); if (ta) { ta.value = await applyBrandSignatureToReply(ta.value, nmId); const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fb.id)); if (item) { item.aiReplyDraft = ta.value; item.aiReplyGeneratedAt = new Date().toISOString(); } }
+      const nmId = String(fb.productDetails?.nmId||''); const ta = document.getElementById('reply-'+fb.id); if (ta) { ta.value = await applyBrandSignatureToReply(ta.value, nmId); const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fb.id)); if (item) { item.aiReplyDraft = ta.value; item.aiReplyGeneratedAt = new Date().toISOString(); await persistAllFeedbacks(); } }
     }
     await sleep(500);
   }
@@ -1264,7 +1270,7 @@ window.sendReply = async function(fbId) {
   const text = ta.value.trim(); if (!text || text.length<2) { toast('Текст пустой','error'); return; }
   const se = document.getElementById('sendStatus-'+fbId); se.innerHTML = '<div class="status-bar status-info" style="margin-top:var(--space-2)"><div class="spinner"></div> Отправляем...</div>';
   try { addLog(`WB: отправка ответа на отзыв ${String(fbId).slice(0,8)}, длина ${String(text || '').length} симв.`, 'info', state.autoActive ? 'both' : 'main'); const r = await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer', { method:'POST', headers:{'Authorization':state.wbKey,'Content-Type':'application/json'}, body:JSON.stringify({id:fbId,text}) });
-    if (r.status===200||r.status===204) { const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fbId)); if (item) { item.answered = true; item.answerText = text; item.replySentMode = 'manual'; item.repliedAt = new Date().toISOString(); pSet(`feedbackHistory/${fbId}`, item); } renderStatusHistory(getStatusHistoryFiltered()); renderHistoryReviews(getFilteredHistory()); se.innerHTML='<div class="status-bar status-ok" style="margin-top:var(--space-2)"><div class="dot"></div> ✅ Отправлено!</div>'; state.kpiSent++; document.getElementById('kpiSent').textContent=state.kpiSent; toast('Отправлено!','success'); setTimeout(()=>{const c=document.getElementById('review-'+fbId);if(c)c.style.opacity='0.4';},1500); }
+    if (r.status===200||r.status===204) { const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fbId)); if (item) { item.answered = true; item.answerText = text; item.replySentMode = 'manual'; item.repliedAt = new Date().toISOString(); await persistAllFeedbacks(); } renderStatusHistory(getStatusHistoryFiltered()); renderHistoryReviews(getFilteredHistory()); se.innerHTML='<div class="status-bar status-ok" style="margin-top:var(--space-2)"><div class="dot"></div> ✅ Отправлено!</div>'; state.kpiSent++; document.getElementById('kpiSent').textContent=state.kpiSent; toast('Отправлено!','success'); setTimeout(()=>{const c=document.getElementById('review-'+fbId);if(c)c.style.opacity='0.4';},1500); }
     else { const e = await r.json().catch(()=>({})); const msg=`${r.status}: ${e.errorText||e.title||r.statusText}`; se.innerHTML=`<div class="status-bar status-err" style="margin-top:var(--space-2)"><div class="dot"></div> ❌ ${msg}</div>`; toast(msg,'error'); }
   } catch(e) { se.innerHTML=`<div class="status-bar status-err" style="margin-top:var(--space-2)"><div class="dot"></div> ❌ ${e.message}</div>`; toast(e.message,'error'); }
 };
@@ -1326,11 +1332,11 @@ window.toggleAutoMode = async function(isRestore = false) {
               const finalReply = await applyBrandSignatureToReply(r, nmId);
               if (finalReply !== r) addLog(`Авторежим: добавлена подпись бренда для ${fb.id.substring(0,8)}`, 'ok', 'both');
               else addLog(`Авторежим: подпись бренда не применена для ${fb.id.substring(0,8)}`, 'info', 'both');
-              state.aiReplies[fb.id]=finalReply; const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fb.id)); if (item) { item.aiReplyDraft = finalReply; item.aiReplyGeneratedAt = new Date().toISOString(); }
+              state.aiReplies[fb.id]=finalReply; const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fb.id)); if (item) { item.aiReplyDraft = finalReply; item.aiReplyGeneratedAt = new Date().toISOString(); await persistAllFeedbacks(); }
               try {
                 addLog(`Авторежим: отправляем ответ для ${fb.id.substring(0,8)}`, 'info', 'both');
                 const res=await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer',{method:'POST',headers:{'Authorization':state.wbKey,'Content-Type':'application/json'},body:JSON.stringify({id:fb.id,text:finalReply})});
-                if(res.status===200||res.status===204){ const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fb.id)); if (item) { item.answered = true; item.answerText = finalReply; item.replySentMode = 'auto'; item.repliedAt = new Date().toISOString(); pSet(`feedbackHistory/${fb.id}`, item); } renderStatusHistory(getStatusHistoryFiltered()); renderHistoryReviews(getFilteredHistory()); state.kpiSent++;document.getElementById('kpiSent').textContent=state.kpiSent;addLog(`Авторежим: ответ отправлен ${fb.id.substring(0,8)}`,'ok','both');}
+                if(res.status===200||res.status===204){ const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fb.id)); if (item) { item.answered = true; item.answerText = finalReply; item.replySentMode = 'auto'; item.repliedAt = new Date().toISOString(); await persistAllFeedbacks(); } renderStatusHistory(getStatusHistoryFiltered()); renderHistoryReviews(getFilteredHistory()); state.kpiSent++;document.getElementById('kpiSent').textContent=state.kpiSent;addLog(`Авторежим: ответ отправлен ${fb.id.substring(0,8)}`,'ok','both');}
                 else { addLog(`Авторежим: WB вернул ${res.status} для ${fb.id.substring(0,8)}`, 'err', 'both'); }
               } catch(e){ addLog(`Авторежим: ошибка отправки ${fb.id.substring(0,8)}: ${e.message}`, 'err', 'both'); }
               await sleep(1000);
