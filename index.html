@@ -834,6 +834,7 @@ async function refreshFeedbackStatuses(manual = false) {
     await pSet('lastFeedbackSyncAt', state.lastFeedbackSyncAt);
     renderStatusHistory(getStatusHistoryFiltered());
     renderHistoryReviews(getFilteredHistory());
+    refreshAllDashboards();
     addLog(`Статусы отзывов: обновлено ${changed} записей`, 'ok');
     if (manual) toast(`Статусы обновлены: ${changed}`, 'success');
   } catch (e) {
@@ -933,6 +934,7 @@ function refreshUIFromState() {
   bindHistoryFilters();
   renderHistoryReviews(state.allFeedbacks || []);
   renderStatusHistory(state.allFeedbacks || []);
+  refreshAllDashboards();
   const statusToggle = document.getElementById('statusSyncEnabledToggle');
   if (statusToggle) {
     statusToggle.onclick = async () => {
@@ -990,6 +992,7 @@ async function saveFeedbackHistory(items) {
   }
   await pSet('feedbackHistory', next);
   state.allFeedbacks = Object.values(next).sort((a, b) => new Date(b.createdDate || b.syncedAt || 0) - new Date(a.createdDate || a.syncedAt || 0));
+  refreshAllDashboards();
   return { added, total: state.allFeedbacks.length };
 }
 
@@ -997,6 +1000,59 @@ async function persistAllFeedbacks() {
   const payload = {};
   (state.allFeedbacks || []).forEach(item => { if (item && item.id) payload[item.id] = item; });
   await pSet('feedbackHistory', payload);
+}
+
+function refreshAllDashboards() {
+  const all = state.allFeedbacks || [];
+  const unanswered = all.filter(fb => !fb.answered).length;
+  const autoAnswered = all.filter(fb => fb.replySentMode === 'auto').length;
+  const manualAnswered = all.filter(fb => fb.replySentMode === 'manual').length;
+  const drafts = all.filter(fb => fb.aiReplyDraft && !fb.answered).length;
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = String(val); };
+  set('kpiUnanswered', unanswered);
+  set('kpiFetched', state.feedbacks?.length || 0);
+  set('kpiSent', autoAnswered + manualAnswered);
+  set('kpiGenerated', drafts + autoAnswered + manualAnswered);
+  set('historyTotalKpi', all.length);
+  set('historyNewKpi', all.filter(fb => deriveFeedbackStatus(fb).code === 'new').length);
+  set('historyAutoKpi', autoAnswered);
+  set('historyManualKpi', manualAnswered);
+  const dash = document.getElementById('dashStatus');
+  if (dash) setStatus('dashStatus', unanswered ? 'warn' : 'ok', unanswered ? `⚠️ Неотвеченных в базе: ${unanswered}` : '✅ Все отзывы в базе отвечены');
+}
+
+async function importNewFeedbacks(options = {}) {
+  const manual = !!options.manual;
+  const renderCurrent = options.renderCurrent !== false;
+  if (!state.wbKey) {
+    if (manual) toast('Введите WB API ключ', 'error');
+    return { added: 0, total: state.allFeedbacks?.length || 0, fetched: 0 };
+  }
+  addLog(manual ? 'Импорт отзывов: ручной запуск' : 'Импорт отзывов: автозапуск', 'info');
+  const feedbacks = await fetchAllNewFeedbackPages();
+  const normalized = feedbacks.map(normalizeFeedback);
+  const result = await saveFeedbackHistory(normalized);
+  state.feedbacks = feedbacks;
+  state.lastFeedbackSyncAt = new Date().toISOString();
+  await pSet('lastFeedbackSyncAt', state.lastFeedbackSyncAt);
+  await persistAllFeedbacks();
+  if (renderCurrent) {
+    document.getElementById('kpiFetched').textContent = feedbacks.length;
+    if (feedbacks.length) {
+      renderReviews(feedbacks);
+      if (state.wbKey) prefetchBrandsForFeedbacks(feedbacks);
+    } else {
+      const rl = document.getElementById('reviewsList');
+      if (rl) rl.innerHTML = '<div class="empty"><div class="empty-icon">🎉</div><h3>Нет новых неотвеченных отзывов</h3></div>';
+    }
+    setStatus('reviewsStatus', 'ok', feedbacks.length ? `✅ Загружено ${feedbacks.length}` : '✅ Новых неотвеченных отзывов нет');
+  }
+  renderHistoryReviews(getFilteredHistory());
+  renderStatusHistory(getStatusHistoryFiltered());
+  refreshAllDashboards();
+  addLog(`Импорт отзывов: получено ${feedbacks.length}, новых в базе ${result.added}, всего ${result.total}`, 'ok');
+  if (manual) toast(`Импортировано ${result.added} новых отзывов`, 'success');
+  return { added: result.added, total: result.total, fetched: feedbacks.length };
 }
 
 function bindHistoryFilters() {
@@ -1073,20 +1129,12 @@ async function fetchAllNewFeedbackPages() {
 }
 
 window.syncNewFeedbacks = async function(manual = false) {
-  if (!state.wbKey) { toast('Введите WB API ключ', 'error'); return; }
   try {
-    addLog(manual ? 'Синхронизация отзывов: ручной запуск' : 'Синхронизация отзывов: автозапуск', 'info');
-    const feedbacks = await fetchAllNewFeedbackPages();
-    const normalized = feedbacks.map(normalizeFeedback);
-    const result = await saveFeedbackHistory(normalized);
-    state.lastFeedbackSyncAt = new Date().toISOString();
-    await pSet('lastFeedbackSyncAt', state.lastFeedbackSyncAt);
-    renderHistoryReviews(getFilteredHistory());
-    addLog(`Синхронизация отзывов: получено ${feedbacks.length}, новых в базе ${result.added}, всего ${result.total}`, 'ok');
-    if (manual) toast(`Синхронизировано ${result.added} новых отзывов`, 'success');
+    return await importNewFeedbacks({ manual, renderCurrent: true });
   } catch (e) {
-    addLog(`Синхронизация отзывов: ошибка ${e.message}`, 'err');
+    addLog(`Импорт отзывов: ошибка ${e.message}`, 'err');
     if (manual) toast(e.message, 'error');
+    return { added: 0, total: state.allFeedbacks?.length || 0, fetched: 0 };
   }
 };
 
@@ -1122,13 +1170,14 @@ window.toggleTheme = function() {
 // ══════════════════════════════════════════════════════════════
 // NAV / TOAST / LOG / HELPERS
 // ══════════════════════════════════════════════════════════════
-const pageMap = { dashboard: 0, reviews: 1, history: 2, automode: 3, settings: 4, log: 5 };
+
 window.showPage = function(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  document.getElementById('page-' + name).classList.add('active');
-  const navBtns = document.querySelectorAll('.nav-item');
-  if (pageMap[name] !== undefined && navBtns[pageMap[name]]) navBtns[pageMap[name]].classList.add('active');
+  const page = document.getElementById('page-' + name);
+  if (page) page.classList.add('active');
+  const btn = Array.from(document.querySelectorAll('.nav-item')).find(n => (n.getAttribute('onclick') || '').includes("showPage('" + name + "')"));
+  if (btn) btn.classList.add('active');
 };
 window.showTab = function(tabId, btn) {
   document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
@@ -1207,21 +1256,19 @@ async function generateAIReply(stars, product, text, pros, cons) {
 // FEEDBACKS
 // ══════════════════════════════════════════════════════════════
 window.loadFeedbacks = async function() {
-  if (!state.wbKey) { setStatus('reviewsStatus','error','⚠️ WB API ключ не введён.'); setStatus('dashStatus','error','⚠️ WB API ключ не введён.'); toast('Введите WB API ключ','error'); return; }
-  const spinner = document.getElementById('loadBtnSpinner'); if (spinner) spinner.style.display = 'inline-flex';
-  setStatus('reviewsStatus','info','⏳ Загружаем...'); setStatus('dashStatus','info','⏳ Загружаем...');
-  addLog('Отзывы WB: запуск обновления списка', 'info');
-  try { addLog('Отзывы WB: запрашиваем count-unanswered', 'info'); const c = await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/count-unanswered', { headers: { 'Authorization': state.wbKey } }); if (c.ok) { const d = await c.json(); const countUnanswered = d.data?.countUnanswered ?? '?'; document.getElementById('kpiUnanswered').textContent = countUnanswered; addLog(`Отзывы WB: неотвеченных по счётчику ${countUnanswered}`, 'ok'); } } catch(e) { addLog(`Отзывы WB: не удалось получить счётчик, ${e.message}`, 'warn'); }
+  if (!state.wbKey) { toast('Введите WB API ключ', 'error'); return; }
+  document.getElementById('loadBtnSpinner').style.display = 'inline-flex';
+  setStatus('reviewsStatus', 'info', '⏳ Загружаем отзывы и синхронизируем историю...');
+  setStatus('dashStatus', 'info', '⏳ Загружаем отзывы...');
   try {
-    addLog('Отзывы WB: запрашиваем список isAnswered=false, take=50, skip=0, order=dateDesc', 'info');
-    const r = await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks?isAnswered=false&take=50&skip=0&order=dateDesc', { headers: { 'Authorization': state.wbKey } });
-    if (spinner) spinner.style.display = 'none';
-    if (r.ok) { const d = await r.json(); const fb = d.data?.feedbacks || []; state.feedbacks = fb; document.getElementById('kpiFetched').textContent = fb.length; addLog(`Отзывы WB: получено ${fb.length} отзывов`, 'ok'); if (fb.length) { const stars = fb.map(x => x.productValuation).filter(Boolean).join(', '); addLog(`Отзывы WB: id первого ${fb[0]?.id || '—'}, оценки [${stars}]`, 'info'); const saveResult = await saveFeedbackHistory(fb.map(normalizeFeedback)); state.lastFeedbackSyncAt = new Date().toISOString(); await pSet('lastFeedbackSyncAt', state.lastFeedbackSyncAt); addLog(`Отзывы WB: история обновлена, новых ${saveResult.added}, всего ${saveResult.total}`, 'ok'); renderHistoryReviews(getFilteredHistory()); }
-      if (!fb.length) { setStatus('reviewsStatus','ok','✅ Нет неотвеченных!'); setStatus('dashStatus','ok','✅ Нет неотвеченных!'); document.getElementById('reviewsList').innerHTML = '<div class="empty"><div class="empty-icon">🎉</div><h3>Все обработаны!</h3></div>'; }
-      else { setStatus('reviewsStatus','ok',`✅ Загружено ${fb.length}`); setStatus('dashStatus','ok',`✅ ${fb.length} отзывов`); addLog('Отзывы WB: начинаем рендер карточек отзывов', 'info'); renderReviews(fb); if (state.wbKey) { addLog('Отзывы WB: запускаем предзагрузку брендов по nmID', 'info'); prefetchBrandsForFeedbacks(fb); } }
-      toast(`Загружено ${fb.length} отзывов`, 'success');
-    } else { const e = await r.json().catch(()=>({})); if (spinner) spinner.style.display='none'; const msg = `WB API ${r.status}: ${e.errorText||e.title||r.statusText}`; setStatus('reviewsStatus','error','❌ '+msg); setStatus('dashStatus','error','❌ '+msg); addLog(msg,'err'); toast(msg,'error'); }
-  } catch(e) { if (spinner) spinner.style.display='none'; setStatus('reviewsStatus','error','❌ '+e.message); addLog(e.message,'err'); toast(e.message,'error'); }
+    await importNewFeedbacks({ manual: true, renderCurrent: true });
+  } catch (e) {
+    setStatus('reviewsStatus', 'error', '❌ ' + e.message);
+    setStatus('dashStatus', 'error', '❌ Ошибка загрузки');
+    throw e;
+  } finally {
+    document.getElementById('loadBtnSpinner').style.display = 'none';
+  }
 };
 
 function renderReviews(feedbacks) {
@@ -1270,7 +1317,7 @@ window.sendReply = async function(fbId) {
   const text = ta.value.trim(); if (!text || text.length<2) { toast('Текст пустой','error'); return; }
   const se = document.getElementById('sendStatus-'+fbId); se.innerHTML = '<div class="status-bar status-info" style="margin-top:var(--space-2)"><div class="spinner"></div> Отправляем...</div>';
   try { addLog(`WB: отправка ответа на отзыв ${String(fbId).slice(0,8)}, длина ${String(text || '').length} симв.`, 'info', state.autoActive ? 'both' : 'main'); const r = await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer', { method:'POST', headers:{'Authorization':state.wbKey,'Content-Type':'application/json'}, body:JSON.stringify({id:fbId,text}) });
-    if (r.status===200||r.status===204) { const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fbId)); if (item) { item.answered = true; item.answerText = text; item.replySentMode = 'manual'; item.repliedAt = new Date().toISOString(); await persistAllFeedbacks(); } renderStatusHistory(getStatusHistoryFiltered()); renderHistoryReviews(getFilteredHistory()); se.innerHTML='<div class="status-bar status-ok" style="margin-top:var(--space-2)"><div class="dot"></div> ✅ Отправлено!</div>'; state.kpiSent++; document.getElementById('kpiSent').textContent=state.kpiSent; toast('Отправлено!','success'); setTimeout(()=>{const c=document.getElementById('review-'+fbId);if(c)c.style.opacity='0.4';},1500); }
+    if (r.status===200||r.status===204) { const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fbId)); if (item) { item.answered = true; item.answerText = text; item.replySentMode = 'manual'; item.repliedAt = new Date().toISOString(); await persistAllFeedbacks(); } renderStatusHistory(getStatusHistoryFiltered()); renderHistoryReviews(getFilteredHistory()); refreshAllDashboards(); se.innerHTML='<div class="status-bar status-ok" style="margin-top:var(--space-2)"><div class="dot"></div> ✅ Отправлено!</div>'; state.kpiSent++; document.getElementById('kpiSent').textContent=state.kpiSent; toast('Отправлено!','success'); setTimeout(()=>{const c=document.getElementById('review-'+fbId);if(c)c.style.opacity='0.4';},1500); }
     else { const e = await r.json().catch(()=>({})); const msg=`${r.status}: ${e.errorText||e.title||r.statusText}`; se.innerHTML=`<div class="status-bar status-err" style="margin-top:var(--space-2)"><div class="dot"></div> ❌ ${msg}</div>`; toast(msg,'error'); }
   } catch(e) { se.innerHTML=`<div class="status-bar status-err" style="margin-top:var(--space-2)"><div class="dot"></div> ❌ ${e.message}</div>`; toast(e.message,'error'); }
 };
@@ -1336,7 +1383,7 @@ window.toggleAutoMode = async function(isRestore = false) {
               try {
                 addLog(`Авторежим: отправляем ответ для ${fb.id.substring(0,8)}`, 'info', 'both');
                 const res=await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer',{method:'POST',headers:{'Authorization':state.wbKey,'Content-Type':'application/json'},body:JSON.stringify({id:fb.id,text:finalReply})});
-                if(res.status===200||res.status===204){ const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fb.id)); if (item) { item.answered = true; item.answerText = finalReply; item.replySentMode = 'auto'; item.repliedAt = new Date().toISOString(); await persistAllFeedbacks(); } renderStatusHistory(getStatusHistoryFiltered()); renderHistoryReviews(getFilteredHistory()); state.kpiSent++;document.getElementById('kpiSent').textContent=state.kpiSent;addLog(`Авторежим: ответ отправлен ${fb.id.substring(0,8)}`,'ok','both');}
+                if(res.status===200||res.status===204){ const item = (state.allFeedbacks || []).find(x => String(x.id) === String(fb.id)); if (item) { item.answered = true; item.answerText = finalReply; item.replySentMode = 'auto'; item.repliedAt = new Date().toISOString(); await persistAllFeedbacks(); } renderStatusHistory(getStatusHistoryFiltered()); renderHistoryReviews(getFilteredHistory()); refreshAllDashboards(); state.kpiSent++;document.getElementById('kpiSent').textContent=state.kpiSent;addLog(`Авторежим: ответ отправлен ${fb.id.substring(0,8)}`,'ok','both');}
                 else { addLog(`Авторежим: WB вернул ${res.status} для ${fb.id.substring(0,8)}`, 'err', 'both'); }
               } catch(e){ addLog(`Авторежим: ошибка отправки ${fb.id.substring(0,8)}: ${e.message}`, 'err', 'both'); }
               await sleep(1000);
