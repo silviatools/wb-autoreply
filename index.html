@@ -235,6 +235,7 @@ textarea { resize: vertical; min-height: 100px; font-family: var(--font-body); }
     <div class="profile-buttons" id="profileButtons"></div>
     <div style="margin-top: var(--space-6)">
       <button class="btn btn-secondary btn-sm" onclick="openProfileSettings()">⚙️ Настроить профили</button>
+
     </div>
   </div>
 </div>
@@ -313,7 +314,7 @@ textarea { resize: vertical; min-height: 100px; font-family: var(--font-body); }
       <div class="page-header"><div><h1 class="page-title">Авторежим</h1><p class="page-desc">Автоматическая проверка и ответы на новые отзывы</p></div></div>
       <div class="card" style="margin-bottom: var(--space-4)"><div class="card-title">Управление авторежимом</div>
         <div class="toggle-wrap" style="margin-bottom: var(--space-4)"><div class="toggle" id="autoToggle" onclick="toggleAutoMode()"></div><span class="toggle-label" id="autoToggleLabel">Авторежим выключен</span></div>
-        <div class="form-group"><label>Интервал проверки (минуты)</label><input type="number" id="autoInterval" value="10" min="5" max="120" style="max-width: 120px"><div class="form-hint">Минимум 5 минут</div></div>
+        <div class="form-group"><label>Интервал проверки (минуты)</label><input type="number" id="autoInterval" value="10" min="5" max="120" style="max-width: 120px"><div class="form-hint">Минимум 15 минут</div></div>
         <div class="form-group"><label>Режим авторежима</label><select id="autoModeType"><option value="generate-only">Только генерировать (без отправки)</option><option value="auto-send">Генерировать и отправлять автоматически</option></select><div class="form-hint">⚠️ Режим «Отправлять автоматически» — рекомендуем сначала протестировать</div></div></div>
       <div class="card"><div class="card-title">Статус авторежима</div><div id="autoStatus"><div class="status-bar status-warn"><div class="dot"></div> Авторежим не запущен</div></div><div id="autoLog" class="log-box" style="margin-top: var(--space-3)"><div class="log-line"><span class="log-time">—</span><span>Лог авторежима пуст</span></div></div></div>
     </div>
@@ -430,9 +431,76 @@ const state = {
   feedbacks: [], aiReplies: {},
   kpiSent: 0, kpiGenerated: 0,
   autoInterval: null, autoActive: false,
+  autoIntervalMinutes: 15, autoModeType: 'generate-only', autoRestorePending: false,
   systemPrompt: DEFAULT_PROMPT,
   brands: [], brandCache: {},
 };
+
+const WB_MIN_INTERVAL_MS = 1200;
+const WB_RETRY_BASE_MS = 2000;
+const WB_MAX_RETRIES = 5;
+
+let wbQueue = Promise.resolve();
+let wbLastRequestAt = 0;
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getRetryAfterMs(response) {
+  const header = response.headers.get('Retry-After');
+  if (!header) return 0;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const dateValue = Date.parse(header);
+  return Number.isFinite(dateValue) ? Math.max(0, dateValue - Date.now()) : 0;
+}
+
+function scheduleWb(task) {
+  wbQueue = wbQueue.then(task, task);
+  return wbQueue;
+}
+
+async function wbFetch(url, options = {}, attempt = 0) {
+  return scheduleWb(async () => {
+    const method = (options.method || 'GET').toUpperCase();
+    const requestLabel = `${method} ${maskUrl(url)}`;
+    if (attempt === 0) addLog(`WB → ${requestLabel}: постановка в очередь`, 'info', state.autoActive ? 'both' : 'main');
+
+    const pauseMs = Math.max(0, WB_MIN_INTERVAL_MS - (Date.now() - wbLastRequestAt));
+    if (pauseMs) {
+      addLog(`WB → ${requestLabel}: ждём слот ${pauseMs}мс`, 'info', state.autoActive ? 'both' : 'main');
+      await delay(pauseMs);
+    }
+
+    wbLastRequestAt = Date.now();
+    const headers = { ...(options.headers || {}) };
+    if (state.wbKey && !headers.Authorization) headers.Authorization = state.wbKey;
+
+    addLog(`WB → ${requestLabel}: отправка, попытка ${attempt + 1}/${WB_MAX_RETRIES + 1}`, 'info', state.autoActive ? 'both' : 'main');
+
+    const startedAt = performance.now();
+    const response = await fetch(url, { ...options, headers });
+    const durationMs = Math.round(performance.now() - startedAt);
+
+    if (response.status === 429) {
+      const retryMs = getRetryAfterMs(response) || (WB_RETRY_BASE_MS * (2 ** attempt));
+      addLog(`WB ← ${requestLabel}: 429 Too Many Requests за ${durationMs}мс`, 'warn', state.autoActive ? 'both' : 'main');
+      if (attempt >= WB_MAX_RETRIES) {
+        addLog(`WB × ${requestLabel}: исчерпаны попытки повтора`, 'err', state.autoActive ? 'both' : 'main');
+        return response;
+      }
+      addLog(`WB ↻ ${requestLabel}: повтор через ${Math.ceil(retryMs / 1000)}с`, 'warn', state.autoActive ? 'both' : 'main');
+      await delay(retryMs);
+      return wbFetch(url, options, attempt + 1);
+    }
+
+    if (response.ok) addLog(`WB ← ${requestLabel}: ${response.status} OK за ${durationMs}мс`, 'ok', state.autoActive ? 'both' : 'main');
+    else addLog(`WB ← ${requestLabel}: ${response.status} ${response.statusText} за ${durationMs}мс`, 'err', state.autoActive ? 'both' : 'main');
+
+    return response;
+  });
+}
 
 // ── Firebase persistence helpers ─────────────────────────────
 async function dbSet(path, val) {
@@ -496,6 +564,7 @@ async function getProfileNames() {
 async function renderProfileButtons() {
   const names = await getProfileNames();
   const el = document.getElementById('profileButtons');
+  // Check if keys exist
   const hasKeys1 = await dbGet('profiles/1/wbKey', '');
   const hasKeys2 = await dbGet('profiles/2/wbKey', '');
   el.innerHTML = [1, 2].map(id => {
@@ -539,25 +608,57 @@ window.selectProfile = async function(id) {
   document.getElementById('currentProfileName').textContent = names[id];
   refreshUIFromState();
   setSyncStatus('ok');
-  addLog(`Профиль «${names[id]}» активирован`, 'ok');
+  addLog(`Профиль «${names[id]}» активирован`, 'ok'); addLog(`Профиль: настройки авторежима — active=${state.autoRestorePending}, interval=${state.autoIntervalMinutes}, mode=${state.autoModeType}`, 'info');
 };
 
 window.switchProfile = function() {
-  if (state.autoActive) { clearInterval(state.autoInterval); state.autoActive = false; }
+  if (state.autoActive) { addLog('Авторежим: остановка по кнопке пользователя', 'warn', 'both'); clearInterval(state.autoInterval); state.autoActive = false; }
   document.getElementById('appShell').style.display = 'none';
   document.getElementById('profileOverlay').classList.remove('hidden');
   renderProfileButtons();
 };
+
+
+async function saveAutoSettings() {
+  if (!state.profileId) return;
+  await Promise.all([
+    pSet('autoActive', !!state.autoActive),
+    pSet('autoIntervalMinutes', Number(state.autoIntervalMinutes) || 15),
+    pSet('autoModeType', state.autoModeType || 'generate-only')
+  ]);
+}
+
+async function restoreAutoModeIfNeeded() {
+  if (!state.autoRestorePending) return;
+  state.autoRestorePending = false;
+  if (!state.wbKey) {
+    addLog('Авторежим: автовосстановление пропущено, нет WB ключа', 'warn', 'both');
+    return;
+  }
+  const active = await pGet('autoActive', false);
+  if (!active) {
+    addLog('Авторежим: в профиле сохранено состояние «выключен»', 'info', 'both');
+    return;
+  }
+  addLog(`Авторежим: найдено сохранённое состояние, восстанавливаем (${state.autoModeType}, ${state.autoIntervalMinutes} мин)`, 'info', 'both');
+  setTimeout(() => {
+    if (!state.autoActive) window.toggleAutoMode(true);
+  }, 300);
+}
 
 async function loadProfileData() {
   state.wbKey = await pGet('wbKey', '');
   state.pplxKey = await pGet('pplxKey', '');
   state.systemPrompt = await pGet('systemPrompt', DEFAULT_PROMPT);
   state.brands = await pGet('brands', []);
+  state.autoIntervalMinutes = Number(await pGet('autoIntervalMinutes', 15)) || 15;
+  state.autoModeType = await pGet('autoModeType', 'generate-only');
+  state.autoRestorePending = !!(await pGet('autoActive', false));
   if (!Array.isArray(state.brands)) state.brands = [];
   state.brandCache = {};
   state.feedbacks = []; state.aiReplies = {};
   state.kpiSent = 0; state.kpiGenerated = 0;
+  if (state.autoInterval) clearInterval(state.autoInterval);
   state.autoActive = false; state.autoInterval = null;
 }
 
@@ -566,6 +667,7 @@ function refreshUIFromState() {
   document.getElementById('filterMinStars').value = '1';
   document.getElementById('filterMinLength').value = '0';
   document.getElementById('filterStopWords').value = '';
+  // Load filters from Firebase asynchronously
   (async () => {
     document.getElementById('filterMinStars').value = await pGet('filterMinStars', '1');
     document.getElementById('filterMinLength').value = await pGet('filterMinLength', '0');
@@ -582,6 +684,8 @@ function refreshUIFromState() {
   document.getElementById('kpiGenerated').textContent = '0';
   document.getElementById('reviewsList').innerHTML = '<div class="empty"><div class="empty-icon">💬</div><h3>Отзывы не загружены</h3><p>Нажмите «Загрузить»</p><button class="btn btn-primary" style="margin-top: var(--space-4)" onclick="loadFeedbacks()">Загрузить отзывы</button></div>';
   renderBrandList();
+  document.getElementById('autoInterval').value = String(state.autoIntervalMinutes || 15);
+  document.getElementById('autoModeType').value = state.autoModeType || 'generate-only';
   document.getElementById('autoToggle').classList.remove('on');
   document.getElementById('autoToggleLabel').textContent = 'Авторежим выключен';
   document.getElementById('autoStatus').innerHTML = '<div class="status-bar status-warn"><div class="dot"></div> Авторежим не запущен</div>';
@@ -589,6 +693,7 @@ function refreshUIFromState() {
   document.getElementById('reviewsStatus').innerHTML = '';
   document.getElementById('mainLog').innerHTML = '<div class="log-line"><span class="log-time">—</span><span>Лог пуст.</span></div>';
   document.getElementById('autoLog').innerHTML = '<div class="log-line"><span class="log-time">—</span><span>Лог авторежима пуст</span></div>';
+  restoreAutoModeIfNeeded();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -624,17 +729,23 @@ window.showTab = function(tabId, btn) {
 };
 function toast(msg, type = '') { const el = document.createElement('div'); el.className = 'toast' + (type ? ' ' + type : ''); el.textContent = msg; document.getElementById('toastContainer').appendChild(el); setTimeout(() => el.remove(), 3000); }
 window.toast = toast;
-function addLog(msg, type = '') {
+function addLog(msg, type = '', target = 'main') {
   const t = new Date().toLocaleTimeString('ru-RU');
-  const box = document.getElementById('mainLog');
-  const autoBox = document.getElementById('autoLog');
-  const line = `<div class="log-line"><span class="log-time">${t}</span><span class="log-${type || 'ok'}">${msg}</span></div>`;
-  if (box.querySelector('.log-time')?.textContent === '—') box.innerHTML = '';
-  box.innerHTML = line + box.innerHTML;
-  if (type === 'info' || type === 'ok') { if (autoBox.querySelector('.log-time')?.textContent === '—') autoBox.innerHTML = ''; autoBox.innerHTML = line + autoBox.innerHTML; }
+  const line = `<div class="log-line"><span class="log-time">${t}</span><span class="log-${type || 'ok'}">${escHtml(msg)}</span></div>`;
+  const write = (id) => {
+    const box = document.getElementById(id);
+    if (!box) return;
+    if (box.querySelector('.log-time')?.textContent === '—') box.innerHTML = '';
+    box.innerHTML = line + box.innerHTML;
+  };
+  if (target === 'main') write('mainLog');
+  else if (target === 'auto') write('autoLog');
+  else if (target === 'both') { write('mainLog'); write('autoLog'); }
 }
+function shortToken(v) { return v ? `${String(v).slice(0, 6)}...${String(v).slice(-4)}` : '—'; }
+function maskUrl(url) { try { const u = new URL(url); return `${u.origin}${u.pathname}${u.search}`; } catch { return url; } }
 window.addLog = addLog;
-window.clearLog = function() { document.getElementById('mainLog').innerHTML = '<div class="log-line"><span class="log-time">—</span><span>Лог очищен.</span></div>'; };
+window.clearLog = function() { document.getElementById('mainLog').innerHTML = '<div class="log-line"><span class="log-time">—</span><span>Лог очищен.</span></div>'; document.getElementById('autoLog').innerHTML = '<div class="log-line"><span class="log-time">—</span><span>Лог авторежима очищен.</span></div>'; };
 function setStatus(elId, type, msg) { const el = document.getElementById(elId); if (!el) return; const m = { ok: 'status-ok', error: 'status-err', warn: 'status-warn', info: 'status-info' }; el.innerHTML = `<div class="status-bar ${m[type] || 'status-info'}"><div class="dot"></div>${msg}</div>`; }
 function escHtml(str) { if (!str) return ''; return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 window.escHtml = escHtml;
@@ -645,25 +756,6 @@ function updateTopbarApiStatus() {
   if (state.wbKey && state.pplxKey) { el.textContent = 'WB: ✓ · AI: ✓'; el.style.color = 'var(--color-success)'; }
   else if (state.wbKey) { el.textContent = 'WB: ✓'; el.style.color = 'var(--color-success)'; }
   else { el.textContent = 'API: не настроен'; el.style.color = 'var(--color-text-muted)'; }
-}
-
-// ══════════════════════════════════════════════════════════════
-// WB FETCH WRAPPER — обработка 429 с авто-повтором
-// ══════════════════════════════════════════════════════════════
-async function wbFetch(url, options = {}, maxRetries = 4) {
-  const opts = { ...options, headers: { 'Authorization': state.wbKey, ...(options.headers || {}) } };
-  for (let i = 0; i < maxRetries; i++) {
-    let resp;
-    try { resp = await fetch(url, opts); } catch(e) { throw e; }
-    if (resp.status !== 429) return resp;
-    // Читаем X-Ratelimit-Retry из заголовков ответа
-    const retryAfter = parseInt(resp.headers.get('X-Ratelimit-Retry') || '3', 10);
-    const waitMs = (retryAfter + 1) * 1000;
-    addLog(`⏳ 429 — ждём ${retryAfter + 1}с перед повтором (попытка ${i + 1}/${maxRetries})`, 'info');
-    await sleep(waitMs);
-  }
-  // Вернуть последний ответ (всё ещё 429) чтобы вызывающий код обработал ошибку
-  return await fetch(url, opts);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -681,15 +773,11 @@ window.saveFilters = function() { pSet('filterMinStars', document.getElementById
 // ══════════════════════════════════════════════════════════════
 window.pingWB = async function() {
   if (!state.wbKey) { toast('Сначала введите WB API ключ', 'error'); return; }
+  addLog(`Проверка WB API: старт, токен ${shortToken(state.wbKey)}`, 'info');
   const el = document.getElementById('wbPingResult');
   el.innerHTML = '<div class="status-bar status-info"><div class="spinner"></div> Проверяем...</div>';
-  try {
-    const r = await wbFetch('https://feedbacks-api.wildberries.ru/ping');
-    if (r.ok) { const d = await r.json(); el.innerHTML = `<div class="status-bar status-ok"><div class="dot"></div> OK: ${d.Status||'OK'}</div>`; toast('WB подключён!', 'success'); }
-    else { const e = await r.json().catch(()=>({})); el.innerHTML = `<div class="status-bar status-err"><div class="dot"></div> Ошибка ${r.status}: ${e.title||r.statusText}</div>`; }
-  } catch(e) { el.innerHTML = `<div class="status-bar status-err"><div class="dot"></div> ${e.message}</div>`; }
+  try { const r = await wbFetch('https://feedbacks-api.wildberries.ru/ping', { headers: { 'Authorization': state.wbKey } }); if (r.ok) { const d = await r.json(); el.innerHTML = `<div class="status-bar status-ok"><div class="dot"></div> OK: ${d.Status||'OK'}</div>`; addLog(`Проверка WB API: успех, статус ${d.Status||'OK'}`, 'ok'); toast('WB подключён!', 'success'); } else { const e = await r.json().catch(()=>({})); const msg = `Проверка WB API: ошибка ${r.status} ${e.title||r.statusText}`; addLog(msg, 'err'); el.innerHTML = `<div class="status-bar status-err"><div class="dot"></div> Ошибка ${r.status}: ${e.title||r.statusText}</div>`; } } catch(e) { addLog(`Проверка WB API: исключение ${e.message}`, 'err'); el.innerHTML = `<div class="status-bar status-err"><div class="dot"></div> ${e.message}</div>`; }
 };
-
 window.testPplx = async function() {
   if (!state.pplxKey) { toast('Введите Perplexity API ключ', 'error'); return; }
   const el = document.getElementById('pplxTestResult');
@@ -702,78 +790,29 @@ window.testPplx = async function() {
 async function generateAIReply(stars, product, text, pros, cons) {
   if (!state.pplxKey) return 'Ошибка: Perplexity API ключ не введён';
   const prompt = state.systemPrompt.replace('{stars}', stars).replace('{product}', product).replace('{text}', text||'не указан').replace('{pros}', pros||'не указаны').replace('{cons}', cons||'не указаны');
-  try {
-    const r = await fetch('https://api.perplexity.ai/chat/completions', { method: 'POST', headers: { 'Authorization': 'Bearer ' + state.pplxKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'sonar', messages: [{ role: 'system', content: 'Ты помощник менеджера маркетплейса. Отвечай только текстом ответа на отзыв, без пояснений.' }, { role: 'user', content: prompt }], max_tokens: 200, temperature: 0.7 }) });
-    if (r.ok) { const d = await r.json(); return d.choices?.[0]?.message?.content?.trim() || 'Ошибка: пустой ответ'; }
-    else { const e = await r.json().catch(()=>({})); return `Ошибка ${r.status}: ${e.error?.message || r.statusText}`; }
-  } catch(e) { return 'Ошибка: ' + e.message; }
+  addLog(`AI → генерация ответа: товар «${product || 'товар'}», оценка ${stars}, текст ${String(text || '').length} симв.`, 'info', state.autoActive ? 'both' : 'main');
+  try { const startedAt = performance.now(); const r = await fetch('https://api.perplexity.ai/chat/completions', { method: 'POST', headers: { 'Authorization': 'Bearer ' + state.pplxKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'sonar', messages: [{ role: 'system', content: 'Ты помощник менеджера маркетплейса. Отвечай только текстом ответа на отзыв, без пояснений.' }, { role: 'user', content: prompt }], max_tokens: 200, temperature: 0.7 }) }); const durationMs = Math.round(performance.now() - startedAt); if (r.ok) { const d = await r.json(); const answer = d.choices?.[0]?.message?.content?.trim() || 'Ошибка: пустой ответ'; addLog(`AI ← ответ получен за ${durationMs}мс, длина ${String(answer).length} симв.`, answer.startsWith('Ошибка:') ? 'err' : 'ok', state.autoActive ? 'both' : 'main'); return answer; } else { const e = await r.json().catch(()=>({})); const err = `Ошибка ${r.status}: ${e.error?.message || r.statusText}`; addLog(`AI ← ошибка за ${durationMs}мс: ${err}`, 'err', state.autoActive ? 'both' : 'main'); return err; } } catch(e) { addLog(`AI × исключение: ${e.message}`, 'err', state.autoActive ? 'both' : 'main'); return 'Ошибка: ' + e.message; }
 }
 
 // ══════════════════════════════════════════════════════════════
-// FEEDBACKS — исправлена ошибка 429: пауза между запросами +
-//             все fetch заменены на wbFetch с авто-повтором
+// FEEDBACKS
 // ══════════════════════════════════════════════════════════════
 window.loadFeedbacks = async function() {
-  if (!state.wbKey) {
-    setStatus('reviewsStatus','error','⚠️ WB API ключ не введён.');
-    setStatus('dashStatus','error','⚠️ WB API ключ не введён.');
-    toast('Введите WB API ключ','error');
-    return;
-  }
-  const spinner = document.getElementById('loadBtnSpinner');
-  if (spinner) spinner.style.display = 'inline-flex';
-  setStatus('reviewsStatus','info','⏳ Загружаем...');
-  setStatus('dashStatus','info','⏳ Загружаем...');
-  addLog('Запрос отзывов WB...', 'info');
-
-  // ── Запрос 1: счётчик неотвеченных ──────────────────────────
+  if (!state.wbKey) { setStatus('reviewsStatus','error','⚠️ WB API ключ не введён.'); setStatus('dashStatus','error','⚠️ WB API ключ не введён.'); toast('Введите WB API ключ','error'); return; }
+  const spinner = document.getElementById('loadBtnSpinner'); if (spinner) spinner.style.display = 'inline-flex';
+  setStatus('reviewsStatus','info','⏳ Загружаем...'); setStatus('dashStatus','info','⏳ Загружаем...');
+  addLog('Отзывы WB: запуск обновления списка', 'info');
+  try { addLog('Отзывы WB: запрашиваем count-unanswered', 'info'); const c = await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/count-unanswered', { headers: { 'Authorization': state.wbKey } }); if (c.ok) { const d = await c.json(); const countUnanswered = d.data?.countUnanswered ?? '?'; document.getElementById('kpiUnanswered').textContent = countUnanswered; addLog(`Отзывы WB: неотвеченных по счётчику ${countUnanswered}`, 'ok'); } } catch(e) { addLog(`Отзывы WB: не удалось получить счётчик, ${e.message}`, 'warn'); }
   try {
-    const c = await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/count-unanswered');
-    if (c.ok) {
-      const d = await c.json();
-      document.getElementById('kpiUnanswered').textContent = d.data?.countUnanswered ?? '?';
-    }
-  } catch {}
-
-  // ── Пауза между запросами (FIX 429) ─────────────────────────
-  await sleep(1000);
-
-  // ── Запрос 2: список отзывов ─────────────────────────────────
-  try {
-    const r = await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks?isAnswered=false&take=50&skip=0&order=dateDesc');
+    addLog('Отзывы WB: запрашиваем список isAnswered=false, take=50, skip=0, order=dateDesc', 'info');
+    const r = await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks?isAnswered=false&take=50&skip=0&order=dateDesc', { headers: { 'Authorization': state.wbKey } });
     if (spinner) spinner.style.display = 'none';
-    if (r.ok) {
-      const d = await r.json();
-      const fb = d.data?.feedbacks || [];
-      state.feedbacks = fb;
-      document.getElementById('kpiFetched').textContent = fb.length;
-      addLog(`Загружено ${fb.length} отзывов`, 'ok');
-      if (!fb.length) {
-        setStatus('reviewsStatus','ok','✅ Нет неотвеченных!');
-        setStatus('dashStatus','ok','✅ Нет неотвеченных!');
-        document.getElementById('reviewsList').innerHTML = '<div class="empty"><div class="empty-icon">🎉</div><h3>Все обработаны!</h3></div>';
-      } else {
-        setStatus('reviewsStatus','ok',`✅ Загружено ${fb.length}`);
-        setStatus('dashStatus','ok',`✅ ${fb.length} отзывов`);
-        renderReviews(fb);
-        if (state.wbKey) prefetchBrandsForFeedbacks(fb);
-      }
+    if (r.ok) { const d = await r.json(); const fb = d.data?.feedbacks || []; state.feedbacks = fb; document.getElementById('kpiFetched').textContent = fb.length; addLog(`Отзывы WB: получено ${fb.length} отзывов`, 'ok'); if (fb.length) { const stars = fb.map(x => x.productValuation).filter(Boolean).join(', '); addLog(`Отзывы WB: id первого ${fb[0]?.id || '—'}, оценки [${stars}]`, 'info'); }
+      if (!fb.length) { setStatus('reviewsStatus','ok','✅ Нет неотвеченных!'); setStatus('dashStatus','ok','✅ Нет неотвеченных!'); document.getElementById('reviewsList').innerHTML = '<div class="empty"><div class="empty-icon">🎉</div><h3>Все обработаны!</h3></div>'; }
+      else { setStatus('reviewsStatus','ok',`✅ Загружено ${fb.length}`); setStatus('dashStatus','ok',`✅ ${fb.length} отзывов`); addLog('Отзывы WB: начинаем рендер карточек отзывов', 'info'); renderReviews(fb); if (state.wbKey) { addLog('Отзывы WB: запускаем предзагрузку брендов по nmID', 'info'); prefetchBrandsForFeedbacks(fb); } }
       toast(`Загружено ${fb.length} отзывов`, 'success');
-    } else {
-      const e = await r.json().catch(()=>({}));
-      if (spinner) spinner.style.display = 'none';
-      const msg = `WB API ${r.status}: ${e.errorText||e.title||r.statusText}`;
-      setStatus('reviewsStatus','error','❌ '+msg);
-      setStatus('dashStatus','error','❌ '+msg);
-      addLog(msg,'err');
-      toast(msg,'error');
-    }
-  } catch(e) {
-    if (spinner) spinner.style.display = 'none';
-    setStatus('reviewsStatus','error','❌ '+e.message);
-    addLog(e.message,'err');
-    toast(e.message,'error');
-  }
+    } else { const e = await r.json().catch(()=>({})); if (spinner) spinner.style.display='none'; const msg = `WB API ${r.status}: ${e.errorText||e.title||r.statusText}`; setStatus('reviewsStatus','error','❌ '+msg); setStatus('dashStatus','error','❌ '+msg); addLog(msg,'err'); toast(msg,'error'); }
+  } catch(e) { if (spinner) spinner.style.display='none'; setStatus('reviewsStatus','error','❌ '+e.message); addLog(e.message,'err'); toast(e.message,'error'); }
 };
 
 function renderReviews(feedbacks) {
@@ -790,6 +829,7 @@ window.generateOneAI = async function(fbId, idx) {
   if (reply.startsWith('Ошибка:')) { addLog(reply,'err'); toast(reply,'error'); return; }
   state.aiReplies[fbId] = reply; state.kpiGenerated++; document.getElementById('kpiGenerated').textContent = state.kpiGenerated;
   const box = document.getElementById('replyBox-'+fbId); if (box) box.innerHTML = `<div class="ai-reply-box"><strong>✨ AI-ответ</strong><textarea class="reply-textarea" id="reply-${fbId}">${escHtml(reply)}</textarea></div>`;
+  // Apply brand signature
   const nmId = String(fb.productDetails?.nmId||'');
   if (nmId && state.brands.length) { if (!(nmId in state.brandCache)) await fetchBrandsByNmIds([nmId]); const ta = document.getElementById('reply-'+fbId); if (ta) { const sig = getBrandSignatureByNmId(nmId); if (sig && !ta.value.includes(sig)) ta.value = ta.value.trimEnd()+'\n\n'+sig; } }
   toast('Ответ сгенерирован!', 'success');
@@ -799,6 +839,7 @@ window.generateAllAI = async function() {
   if (!state.feedbacks.length) { toast('Сначала загрузите отзывы','error'); return; }
   if (!state.pplxKey) { toast('Введите Perplexity ключ','error'); return; }
   const btn = document.getElementById('genAllBtn'); btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Генерация...';
+  // Pre-fetch brands
   if (state.wbKey) { const ids = [...new Set(state.feedbacks.map(f=>String(f.productDetails?.nmId||'')).filter(Boolean))]; await fetchBrandsByNmIds(ids); }
   let count = 0;
   for (const fb of state.feedbacks) {
@@ -819,8 +860,7 @@ window.sendReply = async function(fbId) {
   const ta = document.getElementById('reply-'+fbId); if (!ta) { toast('Сначала сгенерируйте ответ','error'); return; }
   const text = ta.value.trim(); if (!text || text.length<2) { toast('Текст пустой','error'); return; }
   const se = document.getElementById('sendStatus-'+fbId); se.innerHTML = '<div class="status-bar status-info" style="margin-top:var(--space-2)"><div class="spinner"></div> Отправляем...</div>';
-  try {
-    const r = await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:fbId,text}) });
+  try { addLog(`WB: отправка ответа на отзыв ${String(fbId).slice(0,8)}, длина ${String(text || '').length} симв.`, 'info', state.autoActive ? 'both' : 'main'); const r = await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer', { method:'POST', headers:{'Authorization':state.wbKey,'Content-Type':'application/json'}, body:JSON.stringify({id:fbId,text}) });
     if (r.status===200||r.status===204) { se.innerHTML='<div class="status-bar status-ok" style="margin-top:var(--space-2)"><div class="dot"></div> ✅ Отправлено!</div>'; state.kpiSent++; document.getElementById('kpiSent').textContent=state.kpiSent; toast('Отправлено!','success'); setTimeout(()=>{const c=document.getElementById('review-'+fbId);if(c)c.style.opacity='0.4';},1500); }
     else { const e = await r.json().catch(()=>({})); const msg=`${r.status}: ${e.errorText||e.title||r.statusText}`; se.innerHTML=`<div class="status-bar status-err" style="margin-top:var(--space-2)"><div class="dot"></div> ❌ ${msg}</div>`; toast(msg,'error'); }
   } catch(e) { se.innerHTML=`<div class="status-bar status-err" style="margin-top:var(--space-2)"><div class="dot"></div> ❌ ${e.message}</div>`; toast(e.message,'error'); }
@@ -829,13 +869,81 @@ window.sendReply = async function(fbId) {
 // ══════════════════════════════════════════════════════════════
 // AUTO MODE
 // ══════════════════════════════════════════════════════════════
-window.toggleAutoMode = function() {
-  const toggle=document.getElementById('autoToggle'),label=document.getElementById('autoToggleLabel'),se=document.getElementById('autoStatus');
-  if (state.autoActive) { clearInterval(state.autoInterval); state.autoActive=false; toggle.classList.remove('on'); label.textContent='Авторежим выключен'; se.innerHTML='<div class="status-bar status-warn"><div class="dot"></div> Остановлен</div>'; toast('Авторежим выключен'); }
-  else { if (!state.wbKey) { toast('Введите WB ключ','error'); return; } const m=Math.max(parseInt(document.getElementById('autoInterval').value)||10,5); const ms=m*60000; state.autoActive=true; toggle.classList.add('on'); label.textContent=`Активен (каждые ${m} мин)`; se.innerHTML=`<div class="status-bar status-ok"><div class="dot"></div> Авторежим: проверка каждые ${m} мин</div>`; toast('Авторежим запущен','success');
-    state.autoInterval=setInterval(async()=>{ addLog('Авторежим: проверка...','info'); await window.loadFeedbacks(); const mode=document.getElementById('autoModeType').value;
-      if (mode==='auto-send'&&state.feedbacks.length&&state.pplxKey) { for (const fb of state.feedbacks) { if (!state.aiReplies[fb.id]) { const r=await generateAIReply(fb.productValuation,fb.productDetails?.productName||'товар',fb.text,fb.pros,fb.cons); if (!r.startsWith('Ошибка:')) { state.aiReplies[fb.id]=r; try { const res=await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:fb.id,text:r})}); if(res.status===200||res.status===204){state.kpiSent++;document.getElementById('kpiSent').textContent=state.kpiSent;addLog(`Авто: отправлен ${fb.id.substring(0,8)}`,'ok');}} catch{} await sleep(1000); } } } }
-    }, ms); }
+window.toggleAutoMode = async function(isRestore = false) {
+  const toggle = document.getElementById('autoToggle');
+  const label = document.getElementById('autoToggleLabel');
+  const se = document.getElementById('autoStatus');
+  const modeEl = document.getElementById('autoModeType');
+  const intervalEl = document.getElementById('autoInterval');
+  const mode = modeEl.value;
+  const mins = Math.max(15, parseInt(intervalEl.value) || 15);
+  const ms = mins * 60000;
+
+  state.autoIntervalMinutes = mins;
+  state.autoModeType = mode;
+
+  if (state.autoActive) {
+    clearInterval(state.autoInterval);
+    state.autoInterval = null;
+    state.autoActive = false;
+    toggle.classList.remove('on');
+    label.textContent = 'Авторежим выключен';
+    se.innerHTML = '<div class="status-bar status-warn"><div class="dot"></div> Остановлен</div>';
+    await saveAutoSettings();
+    addLog(isRestore ? 'Авторежим: автовосстановление отменено' : 'Авторежим: остановка пользователем, состояние сохранено', 'warn', 'both');
+    if (!isRestore) toast('Авторежим выключен');
+    return;
+  }
+
+  if (!state.wbKey) { toast('Введите WB ключ','error'); return; }
+
+  addLog(`Авторежим: ${isRestore ? 'автовосстановление' : 'запуск'}, интервал ${mins} мин, режим ${mode}`, 'info', 'both');
+  state.autoActive = true;
+  toggle.classList.add('on');
+  label.textContent = `Активен (каждые ${mins} мин)`;
+  se.innerHTML = `<div class="status-bar status-ok"><div class="dot"></div> Авторежим: проверка каждые ${mins} мин</div>`;
+  await saveAutoSettings();
+  if (!isRestore) toast('Авторежим запущен','success');
+
+  const tick = async () => {
+    addLog('Авторежим: новый цикл проверки', 'info', 'both');
+    try {
+      addLog('Авторежим: вызываем loadFeedbacks()', 'info', 'both');
+      await window.loadFeedbacks();
+      if (mode==='auto-send'&&state.feedbacks.length&&state.pplxKey) {
+        addLog(`Авторежим: найдено ${state.feedbacks.length} отзывов для автообработки`, 'info', 'both');
+        for (const fb of state.feedbacks) {
+          if (!state.aiReplies[fb.id]) {
+            addLog(`Авторежим: генерируем ответ для ${fb.id.substring(0,8)}`, 'info', 'both');
+            const r=await generateAIReply(fb.productValuation,fb.productDetails?.productName||'товар',fb.text,fb.pros,fb.cons);
+            if (!r.startsWith('Ошибка:')) {
+              state.aiReplies[fb.id]=r;
+              try {
+                addLog(`Авторежим: отправляем ответ для ${fb.id.substring(0,8)}`, 'info', 'both');
+                const res=await wbFetch('https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer',{method:'POST',headers:{'Authorization':state.wbKey,'Content-Type':'application/json'},body:JSON.stringify({id:fb.id,text:r})});
+                if(res.status===200||res.status===204){state.kpiSent++;document.getElementById('kpiSent').textContent=state.kpiSent;addLog(`Авторежим: ответ отправлен ${fb.id.substring(0,8)}`,'ok','both');}
+                else { addLog(`Авторежим: WB вернул ${res.status} для ${fb.id.substring(0,8)}`, 'err', 'both'); }
+              } catch(e){ addLog(`Авторежим: ошибка отправки ${fb.id.substring(0,8)}: ${e.message}`, 'err', 'both'); }
+              await sleep(1000);
+            } else {
+              addLog(`Авторежим: ошибка генерации для ${fb.id.substring(0,8)}: ${r}`, 'err', 'both');
+            }
+          } else {
+            addLog(`Авторежим: пропуск ${fb.id.substring(0,8)}, AI-ответ уже есть`, 'info', 'both');
+          }
+        }
+      } else if (mode==='auto-send' && !state.feedbacks.length) {
+        addLog('Авторежим: новых отзывов для автоответа нет', 'info', 'both');
+      } else if (mode==='auto-send' && !state.pplxKey) {
+        addLog('Авторежим: автоотправка невозможна, не задан Perplexity API ключ', 'warn', 'both');
+      }
+    } catch(e) {
+      addLog('Авторежим: ошибка цикла ' + e.message, 'err', 'both');
+    }
+  };
+
+  tick();
+  state.autoInterval = setInterval(tick, ms);
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -843,11 +951,8 @@ window.toggleAutoMode = function() {
 // ══════════════════════════════════════════════════════════════
 async function fetchBrandsByNmIds(nmIds) {
   if (!state.wbKey||!nmIds.length) return {};
-  const uc=nmIds.filter(id=>id&&!(id in state.brandCache)); if (!uc.length) return state.brandCache;
-  try {
-    const r=await wbFetch('https://content-api.wildberries.ru/content/v2/get/cards/list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{cursor:{limit:100},filter:{nmIds:uc.map(Number),withPhoto:-1}}})});
-    if (r.ok){const d=await r.json();(d.cards||[]).forEach(c=>{if(c.nmID&&c.brand)state.brandCache[String(c.nmID)]=c.brand;});}
-  } catch {}
+  const uc=nmIds.filter(id=>id&&!(id in state.brandCache)); if (!uc.length) { addLog('Бренды WB: все nmID уже в кеше', 'info'); return state.brandCache; } addLog(`Бренды WB: новых nmID для запроса ${uc.length}`, 'info');
+  try { addLog(`Бренды WB: запрос cards/list, nmID=${uc.slice(0,10).join(', ')}${uc.length>10?' ...':''}`, 'info'); const r=await wbFetch('https://content-api.wildberries.ru/content/v2/get/cards/list',{method:'POST',headers:{'Authorization':state.wbKey,'Content-Type':'application/json'},body:JSON.stringify({settings:{cursor:{limit:100},filter:{nmIds:uc.map(Number),withPhoto:-1}}})}); if (r.ok){const d=await r.json();(d.cards||[]).forEach(c=>{if(c.nmID&&c.brand)state.brandCache[String(c.nmID)]=c.brand;}); addLog(`Бренды WB: загружено карточек ${d.cards?.length || 0}, кеш брендов обновлён`, 'ok');} } catch(e) { addLog(`Бренды WB: ошибка предзагрузки ${e.message}`, 'warn'); }
   return state.brandCache;
 }
 async function prefetchBrandsForFeedbacks(feedbacks) {
